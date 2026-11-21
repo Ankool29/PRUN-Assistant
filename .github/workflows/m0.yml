@@ -13,12 +13,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: prun-m0-${{ github.event_name == 'pull_request' && github.ref || 'publication' }}
+  group: prun-${{ github.ref == 'refs/heads/feature/prun-m1' && 'm1-validation' || (github.event_name == 'pull_request' && github.ref || 'm0-publication') }}
   cancel-in-progress: false
 
 jobs:
   checks:
     name: Tests et compilation
+    if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/feature/prun-m1'
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -98,3 +99,22 @@ jobs:
     steps:
       - uses: actions/deploy-pages@v4
         id: deployment
+
+  check-android-preview:
+    name: Tests Android sur la prévisualisation HTTPS
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/feature/prun-m1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:mobile
+        env:
+          PRUN_TEST_URL: https://ankool29.github.io/PRUN-Assistant/preview/m1/
