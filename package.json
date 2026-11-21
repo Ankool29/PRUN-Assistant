@@ -1,0 +1,22 @@
+{
+  "name": "prun-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "node --test tests/domain.test.ts",
+    "test:mobile": "playwright test"
+  },
+  "engines": { "node": ">=22.18" },
+  "dependencies": { "react": "^19.1.0", "react-dom": "^19.1.0", "zod": "^3.25.76" },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0"
+  }
+}

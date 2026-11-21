@@ -1,0 +1,79 @@
+name: PRUN M0
+
+on:
+  push:
+    branches: [main, 'feature/prun-m0']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '23 */2 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prun-m0-${{ github.event_name == 'pull_request' && github.ref || 'publication' }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Tests et compilation
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npm test
+      - run: python -m unittest discover -s tests
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:mobile
+
+  build-pages:
+    name: Collecte FIO et préparation de Pages
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/feature/prun-m0' && vars.PRUN_M0_PREVIEW == 'true'))
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: python -m collector.collect
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    name: Publication GitHub Pages
+    needs: build-pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment
