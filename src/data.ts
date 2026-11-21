@@ -1,3 +1,4 @@
+import { staticDataUrl } from './staticData.ts'
 import { z } from 'zod'
 import demoData from '../data/demo.json'
 
@@ -44,8 +45,7 @@ export type Order = Market['buys'][number]
 export const demo = snapshotSchema.parse(demoData)
 
 export async function loadFio(signal: AbortSignal): Promise<Snapshot> {
-  const url = new URL('./data/fio.json', window.location.href)
-  const response = await fetch(url, { signal, cache: 'no-cache' })
+  const response = await fetch(staticDataUrl('fio.json'), { signal, cache: 'no-cache' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   const snapshot = snapshotSchema.parse(await response.json())
   if (snapshot.source !== 'fio') throw new Error('Source FIO attendue')

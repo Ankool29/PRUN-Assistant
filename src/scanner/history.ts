@@ -1,3 +1,4 @@
+import { staticDataUrl } from '../staticData.ts'
 import { z } from 'zod'
 import type { Market, Snapshot } from '../data.ts'
 
@@ -23,7 +24,7 @@ export type HistorySeries = z.infer<typeof seriesSchema>
 export type History = z.infer<typeof historySchema>
 
 export async function loadHistory(signal: AbortSignal) {
-  const response = await fetch(new URL('./data/history.json', window.location.href), { signal, cache: 'no-cache' })
+  const response = await fetch(staticDataUrl('history.json'), { signal, cache: 'no-cache' })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return historySchema.parse(await response.json())
 }

@@ -59,3 +59,15 @@ npm run preview
 ```
 
 La CI dépose un artefact `prun-m1-preview` après les tests. Lors d’un push sur la branche M1, elle essaie d’actualiser les deux instantanés avant l’emballage. Pour ouvrir un artefact téléchargé, extraire le dossier puis servir son contenu via `python -m http.server --directory dossier-extrait 8000`. Les fichiers de l’artefact contiennent les instantanés réels de la branche et le scénario fictif intégré. Rafraîchir les instantanés localement avec les commandes ci-dessus pour réactiver l’analyse s’ils dépassent trois heures. La branche M1 ne déploie pas sur l’URL de production.
+
+### Prévisualisation Android sur GitHub Pages
+
+Le scanner est monté sous `/PRUN-Assistant/preview/m1/`. Le build utilise cette valeur pour `base` dans Vite et résout les deux instantanés JSON depuis la même base. Le workflow Pages assemble les fichiers de M0 à la racine et ceux d’une révision épinglée de M1 sous `preview/m1/`. Les deux données FIO sont régénérées à chaque publication planifiée. Un échec de l’assemblage laisse le dernier déploiement en ligne.
+
+```sh
+npm run build -- --base=/PRUN-Assistant/preview/m1/
+PRUN_TEST_PREFIX=/PRUN-Assistant/preview/m1/ npm run test:mobile
+PRUN_TEST_URL=https://ankool29.github.io/PRUN-Assistant/preview/m1/ npm run test:mobile
+```
+
+Playwright émule un Pixel 7 dans les deux orientations. Le test du lien direct vérifie les ressources JS et CSS, les deux URL JSON, leur provenance FIO et le statut de fraîcheur affiché.

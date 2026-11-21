@@ -36,6 +36,11 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:mobile
+      - run: npm run build -- --base=/PRUN-Assistant/preview/m1/
+      - run: npm run test:mobile
+        env:
+          PRUN_TEST_PREFIX: /PRUN-Assistant/preview/m1/
+      - run: npm run build
       - name: Actualiser les données de la prévisualisation
         if: github.ref == 'refs/heads/feature/prun-m1'
         run: |
