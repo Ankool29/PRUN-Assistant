@@ -3,6 +3,7 @@ import { formatPrice, formatTime, numeric } from '../domain.ts'
 import { Status } from '../ui.tsx'
 import type { Arbitrage } from './arbitrage.ts'
 import type { Financials } from './execution.ts'
+import type { Itinerary } from './itinerary.ts'
 import type { Speculation } from './speculation.ts'
 
 export const percent = (value: number) => new Intl.NumberFormat('fr-FR', {
@@ -16,6 +17,14 @@ function Finances({ money, currency }: { money: Financials; currency: string }) 
     ['Capital mobilisé', money.invested], ['Bénéfice net estimé', money.net],
   ]
   return <dl className="facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{formatPrice(value)} {currency}</dd></div>)}</dl>
+}
+
+function Travel({ route, quantity, currency }: { route: Itinerary; quantity: number; currency: string }) {
+  return <><h3>Itinéraire</h3>
+    {route.legs.length ? <ol className="scanner-legs">{route.legs.map(leg => <li key={leg.kind}>
+      {leg.from} vers {leg.to} · {leg.kind === 'empty' ? 'À vide' : 'Chargé'} · {formatPrice(leg.fixed + leg.unit * quantity)} {currency}
+    </li>)}</ol> : <p>Achat et revente sur place.</p>}
+  </>
 }
 
 function observationAge(timestamp: string | null, now: number) {
@@ -50,6 +59,7 @@ export function ArbitrageDetails({ item, currency, rates, now, demo }: {
       <p className="muted">{numeric(item.quantity)} unités simulées · Profondeur bilatérale {numeric(item.liquidity)} unités</p>
       {[...new Set([item.from.currency, item.to.currency])].filter(code => code !== currency).map(code =>
         <p className="muted" key={code}>1 {code} ≈ {numeric(rates[code])} {currency} (taux saisi)</p>)}
+      <Travel route={item.route} quantity={item.quantity} currency={currency}/>
       <Finances currency={currency} money={item.money}/>
       <p className="muted">Le risque augmente avec l’âge des carnets, la proportion de la profondeur utilisée, le change et l’incertitude d’une vente limite.</p>
       <h3>Niveaux simulés <small>· {currency} par unité</small></h3>
@@ -65,11 +75,12 @@ const scenarioLabels = ['Pessimiste', 'Neutre', 'Optimiste']
 export function SpeculationDetails({ item, currency, rates, now, demo }: {
   item: Speculation; currency: string; rates: Readonly<Record<string, number>>; now: number; demo: boolean
 }) {
-  const { stats, market, scenarios } = item
+  const { stats, to: market, from, scenarios } = item
+  const resale = from.exchange === market.exchange ? `${market.exchange} · revente sur place` : `${from.exchange} vers ${market.exchange}`
   return <details className="record scanner-record">
-    <Summary ticker={market.ticker} title={`${market.exchange} · scénario neutre`} money={scenarios[1].money} risk={item.risk} currency={currency}/>
+    <Summary ticker={market.ticker} title={`${resale} · scénario neutre`} money={scenarios[1].money} risk={item.risk} currency={currency}/>
     <div className="record-body">
-      <BookTime markets={[market]} now={now} demo={demo}/>
+      <BookTime markets={from === market ? [market] : [from, market]} now={now} demo={demo}/>
       <h3>Référence historique <small>· {market.currency}</small></h3>
       <dl className="facts">
         <div><dt>Moyenne / médiane</dt><dd>{formatPrice(stats.mean)} / {formatPrice(stats.median)}</dd></div>
@@ -91,7 +102,9 @@ export function SpeculationDetails({ item, currency, rates, now, demo }: {
         </tr>)}</tbody>
       </table>
       <h3>Calcul du scénario neutre</h3>
-      {market.currency !== currency && <p className="muted">1 {market.currency} ≈ {numeric(rates[market.currency])} {currency} (taux saisi)</p>}
+      {[...new Set([from.currency, market.currency])].filter(code => code !== currency).map(code =>
+        <p className="muted" key={code}>1 {code} ≈ {numeric(rates[code])} {currency} (taux saisi)</p>)}
+      <Travel route={item.route} quantity={item.quantity} currency={currency}/>
       <Finances currency={currency} money={scenarios[1].money}/>
       <p className="muted">Le risque tient compte de l’âge de la cotation, de la volatilité, de la couverture historique, du volume engagé et de la perte pessimiste.</p>
       <h3>Achat simulé <small>· {numeric(item.quantity)} unités</small></h3>

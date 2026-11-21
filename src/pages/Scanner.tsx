@@ -7,11 +7,14 @@ import { scanSpeculation } from '../scanner/speculation.ts'
 import { demoHistory, loadHistory, loadPairHistory, pairKey, type History, type HistorySeries } from '../scanner/history.ts'
 import { validCosts, type Costs } from '../scanner/execution.ts'
 import { ArbitrageDetails, SpeculationDetails } from '../scanner/details.tsx'
+import { groupByDeparture, type TransportRates } from '../scanner/itinerary.ts'
+import { unknownTariffs, useShipProfiles, type TariffForm } from '../scanner/ships.ts'
 
 type Sort = 'net' | 'yield' | 'risk'
 type Panel = 'arbitrage' | 'speculation'
+type Scope = 'local' | 'all'
 const defaults = {
-  capital: '100000', buyFee: '1', sellFee: '1', fixedTransport: '0', unitTransport: '0',
+  capital: '100000', buyFee: '1', sellFee: '1',
   minQuantity: '1', maxQuantity: '1000', minReturn: '0', minLiquidity: '1', target: '',
 }
 
@@ -25,12 +28,12 @@ function NumericField({ label, value, onChange, step = 'any', min = 0, max, plac
   </label>
 }
 
-function ExchangeField({ label, data, value, set }: {
-  label: string; data: Snapshot; value: string; set: (value: string) => void
+function ExchangeField({ label, data, value, set, empty = 'Toutes' }: {
+  label: string; data: Snapshot; value: string; set: (value: string) => void; empty?: string
 }) {
   return <label className="field"><span>{label}</span>
     <select value={value} onChange={event => set(event.target.value)}>
-      <option value="">Toutes</option>
+      <option value="">{empty}</option>
       {data.exchanges.map(item => <option key={item.code} value={item.code}>{item.code} · {item.station}</option>)}
     </select>
   </label>
@@ -54,11 +57,29 @@ function useHistoryStore(enabled: boolean) {
 
 const parse = (value: string) => value.trim() ? Number(value) : NaN
 
+function knownTariff(value: string) {
+  const cost = parse(value)
+  return Number.isFinite(cost) && cost >= 0 ? cost : null
+}
+
 export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const demo = data.source === 'demo'
   const currencies = [...new Set(data.exchanges.map(row => row.currency))].sort()
-  const [currency, setCurrency] = useState(() => currencies.find(code => data.exchanges.filter(row => row.currency === code).length > 1) ?? currencies[0])
-  const [rates, setRates] = useState<Record<string, string>>({})
+  const ships = useShipProfiles(data.source)
+  const parked = data.exchanges.find(row => row.code === ships.current.parking)
+  const parking = parked?.code ?? ''
+  const [scope, setScope] = useState<Scope>('local')
+  const [currencyOverride, setCurrency] = useState('')
+  const currency = currencyOverride || parked?.currency || currencies[0]
+  const [exchangeRates, setExchangeRates] = useState<Record<string, Record<string, string>>>({})
+  const rates = exchangeRates[currency] ?? {}
+  const tariffForm = ships.current.byCurrency[currency] ?? unknownTariffs
+  const transport: TransportRates = {
+    emptyFixed: knownTariff(tariffForm.emptyFixed),
+    loadedFixed: knownTariff(tariffForm.loadedFixed),
+    loadedUnit: knownTariff(tariffForm.loadedUnit),
+  }
+  const departure = { parking, transport }
   const [panel, setPanel] = useState<Panel>('arbitrage')
   const [mode, setMode] = useState<SaleMode>('immediate')
   const [from, setFrom] = useState('')
@@ -74,15 +95,15 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const costs: Costs = {
     currency, rates: Object.fromEntries(Object.entries(rates).map(([code, value]) => [code, parse(value)])),
     capital: parse(form.capital), buyFee: parse(form.buyFee) / 100, sellFee: parse(form.sellFee) / 100,
-    fixedTransport: parse(form.fixedTransport), unitTransport: parse(form.unitTransport),
     minQuantity: parse(form.minQuantity), maxQuantity: parse(form.maxQuantity),
     minReturn: parse(form.minReturn) / 100, minLiquidity: parse(form.minLiquidity),
   }
   const term = searchKey(query)
   const marketNames = useMemo(() => new Map(data.materials.map(row => [row.ticker, searchKey(displayName(row.name))])), [data.materials])
   const matching = data.markets.filter(row => !term || searchKey(`${row.ticker} ${marketNames.get(row.ticker) ?? ''}`).includes(term))
-  const filtered = matching.filter(row => !from || row.exchange === from)
-  const exact = filtered.length === 1 ? filtered[0] : filtered.find(row => from && searchKey(row.ticker) === term)
+  const origin = scope === 'local' ? parking : from
+  const resaleMarkets = matching.filter(row => !to || row.exchange === to)
+  const exact = resaleMarkets.length === 1 ? resaleMarkets[0] : resaleMarkets.find(row => to && searchKey(row.ticker) === term)
   const exactKey = exact && pairKey(exact.ticker, exact.exchange)
   const bundledPairs = useMemo(
     () => demo ? demoHistory(data, now) : history?.series ?? [],
@@ -96,14 +117,39 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const ratesInvalid = Object.entries(rates).some(([code, value]) => code !== currency && value.trim() && !(Number.isFinite(parse(value)) && parse(value) > 0))
   const invalid = !validCosts(costs) || hypothesisInvalid || ratesInvalid
 
-  const arbitrage = snapshotUsable && !invalid && panel === 'arbitrage'
-    ? scanArbitrage(matching, costs, { now, demo, mode, from, to, target }) : []
-  const speculative = snapshotUsable && !invalid && panel === 'speculation'
-    ? scanSpeculation(filtered, histories, costs, { now, demo }) : null
-  const total = panel === 'arbitrage' ? arbitrage.length : speculative?.opportunities.length ?? 0
+  const arbitrage = parking && snapshotUsable && !invalid && panel === 'arbitrage'
+    ? scanArbitrage(matching, costs, { now, demo, departure, mode, from: origin, to, target }) : []
+  const speculative = parking && snapshotUsable && !invalid && panel === 'speculation'
+    ? scanSpeculation(matching, histories, costs, { now, demo, departure, from: origin, to }) : null
   arbitrage.sort((a, b) => sort === 'risk' ? a.risk - b.risk || b.money.net - a.money.net : b.money[sort] - a.money[sort])
-  speculative?.opportunities.sort((a, b) => sort === 'risk' ? a.risk - b.risk || b.scenarios[1].money.net - a.scenarios[1].money.net
-    : b.scenarios[1].money[sort] - a.scenarios[1].money[sort])
+  speculative?.opportunities.sort((a, b) => {
+    // Dans le groupe de départ, la revente sur place reste accessible après les trajets interbourses.
+    const onSite = (item: typeof a) => Number(item.from.exchange === parking && item.to.exchange === parking)
+    return onSite(a) - onSite(b) || (sort === 'risk'
+      ? a.risk - b.risk || b.scenarios[1].money.net - a.scenarios[1].money.net
+      : b.scenarios[1].money[sort] - a.scenarios[1].money[sort])
+  })
+  const rows = panel === 'arbitrage'
+    ? arbitrage.map(item => ({
+      origin: item.from.exchange, key: `${item.mode}.${item.from.ticker}.${item.from.exchange}.${item.to.exchange}`,
+      content: <ArbitrageDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>,
+    }))
+    : (speculative?.opportunities ?? []).map(item => ({
+      origin: item.from.exchange, key: `${pairKey(item.to.ticker, item.to.exchange)}.${item.from.exchange}`,
+      content: <SpeculationDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>,
+    }))
+  const { local, reposition } = groupByDeparture(rows, parking, row => row.origin)
+  const shown = Math.min(local.length, limit) + Math.min(reposition.length, limit)
+  const resetDeparture = () => { setFrom(''); setTo(''); setLimit(PAGE_SIZE) }
+
+  function tariff(key: keyof TariffForm, label: string) {
+    return <NumericField label={label} value={tariffForm[key]} placeholder="Inconnu" onChange={value => {
+      ships.update(item => ({ ...item, byCurrency: {
+        ...item.byCurrency, [currency]: { ...tariffForm, [key]: value },
+      } }))
+      setLimit(PAGE_SIZE)
+    }}/>
+  }
 
   function field(key: keyof typeof defaults, label: string, props?: { step?: string; min?: number; max?: number; placeholder?: string }) {
     return <NumericField label={label} value={form[key]} {...props} onChange={value => {
@@ -125,16 +171,43 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
 
   return <>
     <SectionHead title="Scanner commercial">Comparez des exécutions simulées et explorez les écarts aux prix historiques.</SectionHead>
+    <section className="scanner-controls" aria-label="Position du vaisseau">
+      <div className="scanner-grid">
+        <label className="field"><span>Vaisseau sélectionné</span><select value={ships.current.id} onChange={event => {
+          ships.select(Number(event.target.value)); resetDeparture()
+        }}>
+          {ships.ships.map(item => <option key={item.id} value={item.id}>{item.name.trim() || `Vaisseau ${item.id}`}</option>)}
+        </select></label>
+        <ExchangeField label="Marché de stationnement" data={data} value={parking} empty="Choisir une bourse" set={value => {
+          ships.update(item => ({ ...item, parking: value })); resetDeparture()
+        }}/>
+        <button className="button" onClick={() => { ships.add(); resetDeparture() }}>Ajouter un vaisseau</button>
+      </div>
+      <details className="scanner-options">
+        <summary>Renommer le vaisseau</summary>
+        <label className="field"><span>Nom du vaisseau</span>
+          <input type="text" maxLength={40} value={ships.current.name} onChange={event => {
+            const name = event.target.value
+            ships.update(item => ({ ...item, name }))
+          }}/>
+        </label>
+      </details>
+      <div className="switch scanner-scope" role="group" aria-label="Périmètre du scanner">
+        <button aria-pressed={scope === 'local'} onClick={() => { setScope('local'); setLimit(PAGE_SIZE) }}>Départ de mon marché</button>
+        <button aria-pressed={scope === 'all'} onClick={() => { setScope('all'); setLimit(PAGE_SIZE) }}>Toutes les bourses</button>
+      </div>
+    </section>
     <div className="switch scanner-tabs" role="group" aria-label="Moteur d’analyse">
       <button aria-pressed={panel === 'arbitrage'} onClick={() => {setPanel('arbitrage'); setLimit(PAGE_SIZE)}}>Arbitrage</button>
       <button aria-pressed={panel === 'speculation'} onClick={() => {setPanel('speculation'); setLimit(PAGE_SIZE)}}>Spéculation</button>
     </div>
     <section className="scanner-controls" aria-label="Filtres et paramètres de simulation">
       <div className="scanner-grid">
-        <ExchangeField label={panel === 'arbitrage' ? 'Bourse d’achat' : 'Bourse'} data={data} value={from} set={value => {setFrom(value); setLimit(PAGE_SIZE)}}/>
-        {panel === 'arbitrage' && <ExchangeField label="Bourse de revente" data={data} value={to} set={value => {setTo(value); setLimit(PAGE_SIZE)}}/>}
+        {scope === 'all' && <ExchangeField label="Bourse d’achat" data={data} value={from} set={value => {setFrom(value); setLimit(PAGE_SIZE)}}/>}
+        <ExchangeField label="Bourse de revente" data={data} value={to} set={value => {setTo(value); setLimit(PAGE_SIZE)}}/>
         <Search placeholder="Rechercher un matériau" value={query} onChange={value => {setQuery(value); setLimit(PAGE_SIZE)}}/>
-        <label className="field"><span>Devise de référence</span><select value={currency} onChange={event => {setCurrency(event.target.value); setRates({}); setLimit(PAGE_SIZE)}}>
+        <label className="field"><span>Devise de référence</span><select value={currencyOverride} onChange={event => {setCurrency(event.target.value); setLimit(PAGE_SIZE)}}>
+          <option value="">Automatique · {parked?.currency ?? currencies[0]}</option>
           {currencies.map(code => <option key={code}>{code}</option>)}
         </select></label>
         {field('capital', `Capital (${currency})`)}
@@ -146,17 +219,16 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
         <div className="scanner-grid">
           {field('buyFee', 'Frais d’achat (%)', { max: 100 })}
           {field('sellFee', 'Frais de vente (%)', { max: 99.99 })}
-          {panel === 'arbitrage' && <>
-            {field('fixedTransport', `Transport fixe (${currency})`)}
-            {field('unitTransport', `Transport par unité (${currency})`)}
-          </>}
+          {tariff('emptyFixed', `Trajet à vide (${currency})`)}
+          {tariff('loadedFixed', `Trajet chargé, montant fixe (${currency})`)}
+          {tariff('loadedUnit', `Trajet chargé, par unité (${currency})`)}
           {field('minQuantity', 'Quantité minimale', { step: '1', min: 1 })}
           {field('maxQuantity', 'Quantité maximale', { step: '1', min: 1 })}
           {currencies.filter(code => code !== currency).map(code => <NumericField key={code} label={`1 ${code} en ${currency}`}
-            placeholder="Sans conversion" value={rates[code] ?? ''} onChange={value => {setRates(previous => ({ ...previous, [code]: value })); setLimit(PAGE_SIZE)}}/>)}
+            placeholder="Sans conversion" value={rates[code] ?? ''} onChange={value => {setExchangeRates(previous => ({ ...previous, [currency]: { ...rates, [code]: value } })); setLimit(PAGE_SIZE)}}/>)}
         </div>
       </details>
-      <p className="muted">Renseignez un taux pour inclure une autre devise. Les frais saisis sont des hypothèses.</p>
+      <p className="muted">Les tarifs saisis sont des estimations par trajet, dans la devise affichée. Le trajet se termine à la bourse de revente. Renseignez un taux pour inclure une autre devise.</p>
       {panel === 'arbitrage' && <div className="scanner-grid scanner-mode">
         <label className="field"><span>Mode de revente</span><select value={mode} onChange={event => {setMode(event.target.value as SaleMode); setLimit(PAGE_SIZE)}}>
           <option value="immediate">Vente immédiate</option><option value="limit">Ordre limite futur</option>
@@ -167,6 +239,9 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
     {panel === 'arbitrage' && <p className="scanner-notice">{mode === 'immediate'
       ? 'La vente immédiate suppose que les ordres observés restent disponibles jusqu’à l’arrivée des marchandises.'
       : 'Scénario conditionnel. Sans prix saisi, le scanner utilise la meilleure offre de vente observée à destination.'}</p>}
+    {!parking && <Empty>Choisissez le marché de stationnement du vaisseau pour calculer les opportunités.</Empty>}
+    {parking && (transport.loadedFixed === null || transport.loadedUnit === null || (scope === 'all' && transport.emptyFixed === null)) &&
+      <p className="scanner-notice">Coût de transport inconnu. Les trajets concernés sont exclus. Renseignez les montants nécessaires dans les paramètres de transport.</p>}
     {!snapshotUsable && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
     {invalid && <Empty>Vérifiez les paramètres de simulation. Le capital et les taux saisis doivent être positifs, et les quantités entières et cohérentes.</Empty>}
     {panel === 'speculation' && <section className="history-status" aria-label="État des historiques">
@@ -175,7 +250,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
         : failed ? 'Historique embarqué indisponible.' : 'Chargement de l’historique embarqué…'}</p>
       <p className="muted">Scénarios sur les 30 derniers jours UTC complets. Les résultats dépendent du prix et de l’exécution réelle de la revente.</p>
       {failed && <button className="button" onClick={retry}>Recharger l’historique</button>}
-      {speculative && <p>{speculative.usable} paires exploitables · {speculative.stale} cotations anciennes · {speculative.uncovered} historiques absents · {speculative.insufficient.length} insuffisants</p>}
+      {speculative && <p>{speculative.usable} historiques exploitables · {speculative.stale} cotations anciennes · {speculative.uncovered} historiques absents · {speculative.insufficient.length} insuffisants</p>}
       {!demo && bundledMissing && exact && <button className="button" disabled={request?.phase === 'loading'} onClick={() => void requestPair(exact)}>
         {request?.phase === 'loading' ? 'Chargement FIO…' : `Charger l’historique de ${exactKey}`}
       </button>}
@@ -193,12 +268,18 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
         <option value="net">Bénéfice net décroissant</option><option value="yield">Rendement décroissant</option><option value="risk">Risque croissant</option>
       </select></label>
     </div>
-    {total ? <div className="records">{panel === 'arbitrage'
-      ? arbitrage.slice(0, limit).map(item => <ArbitrageDetails key={`${item.mode}.${item.from.ticker}.${item.from.exchange}.${item.to.exchange}`} item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>)
-      : speculative?.opportunities.slice(0, limit).map(item => <SpeculationDetails key={pairKey(item.market.ticker, item.market.exchange)} item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>)
-    }</div> : snapshotUsable && !invalid && <Empty>{panel === 'arbitrage'
-      ? 'Aucun trajet rentable selon ces paramètres et les carnets récents.'
-      : 'Aucun scénario admissible parmi les historiques disponibles pour ces filtres.'}</Empty>}
-    <ShowMore shown={limit} total={total} more={() => setLimit(limit + PAGE_SIZE)}/>
+    {parking && snapshotUsable && !invalid && <>
+      <section aria-label="Opportunités depuis mon marché" className="scanner-result-group">
+        <h3>Depuis {parking} · {local.length} {local.length === 1 ? 'opportunité' : 'opportunités'}</h3>
+        {local.length ? <div className="records">{local.slice(0, limit).map(row => <div key={row.key}>{row.content}</div>)}</div>
+          : <Empty>Aucune opportunité rentable depuis le marché de stationnement avec ces filtres.</Empty>}
+      </section>
+      {scope === 'all' && <section aria-label="Opportunités avec trajet à vide" className="scanner-result-group">
+        <h3>Avec trajet à vide · {reposition.length} {reposition.length === 1 ? 'opportunité' : 'opportunités'}</h3>
+        {reposition.length ? <div className="records">{reposition.slice(0, limit).map(row => <div key={row.key}>{row.content}</div>)}</div>
+          : <Empty>Aucune opportunité rentable avec un trajet à vide et les coûts renseignés.</Empty>}
+      </section>}
+      <ShowMore shown={shown} total={rows.length} more={() => setLimit(limit + PAGE_SIZE)}/>
+    </>}
   </>
 }

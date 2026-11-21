@@ -202,3 +202,7 @@ footer span { margin: 0 .25rem; }
   .scanner-short { display: none; }
   .scanner-full { display: inline; }
 }
+.scanner-scope { margin-top: .55rem; flex-wrap: wrap; }
+.scanner-controls input[type="text"] { width: 100%; min-height: 46px; border: 1px solid var(--line); border-radius: 8px; background: #11191c; color: #ecf4f1; padding: .5rem .65rem; font-size: 1rem; }
+.scanner-result-group { margin-bottom: 1.15rem; }
+.scanner-legs { padding-left: 1.3rem; line-height: 1.55; }

@@ -1,4 +1,5 @@
 import type { Market, Order } from '../data.ts'
+import type { Itinerary } from './itinerary.ts'
 import { freshness } from '../domain.ts'
 
 export type Costs = {
@@ -7,8 +8,6 @@ export type Costs = {
   capital: number
   buyFee: number
   sellFee: number
-  fixedTransport: number
-  unitTransport: number
   minQuantity: number
   maxQuantity: number
   minReturn: number
@@ -27,7 +26,7 @@ export function rate(costs: Costs, currency: string) {
 
 export function validCosts(costs: Costs) {
   return costs.capital > 0 && [
-    costs.capital, costs.buyFee, costs.sellFee, costs.fixedTransport, costs.unitTransport,
+    costs.capital, costs.buyFee, costs.sellFee,
     costs.minReturn, costs.minLiquidity,
   ].every(value => Number.isFinite(value) && value >= 0)
     && costs.buyFee <= 1 && costs.sellFee < 1
@@ -58,10 +57,10 @@ export function bookDepth(levels: Level[]) {
   return levels.reduce((sum, row) => Math.min(Number.MAX_SAFE_INTEGER, sum + row.quantity), 0)
 }
 
-export function totals(buy: number, sell: number, quantity: number, costs: Costs, transport: boolean) {
+export function totals(buy: number, sell: number, quantity: number, costs: Costs, route: Itinerary) {
   const buyFee = buy * costs.buyFee
   const sellFee = sell * costs.sellFee
-  const shipping = transport && quantity > 0 ? costs.fixedTransport + costs.unitTransport * quantity : 0
+  const shipping = quantity > 0 ? route.fixed + route.unit * quantity : 0
   const invested = buy + buyFee + shipping
   const gross = sell - buy
   const net = sell - sellFee - invested
@@ -69,6 +68,60 @@ export function totals(buy: number, sell: number, quantity: number, costs: Costs
 }
 
 export type Financials = ReturnType<typeof totals>
+
+export function fillsFor(asks: Level[], bids: Level[], costs: Costs, route: Itinerary) {
+  let quantity = 0
+  let buyValue = 0
+  let sellValue = 0
+  let a = 0
+  let b = 0
+  let askRemaining = asks[0]?.quantity ?? 0
+  let bidRemaining = bids[0]?.quantity ?? 0
+  const fills: Fill[] = []
+  let best: { quantity: number; money: Financials; index: number; lastQuantity: number } | null = null
+  while (a < asks.length && b < bids.length && quantity < costs.maxQuantity) {
+    const buy = asks[a].price
+    const sell = bids[b].price
+    const unitCost = buy * (1 + costs.buyFee) + route.unit
+    const marginal = sell * (1 - costs.sellFee) - unitCost
+    if (!Number.isFinite(marginal)) break
+    if (marginal <= 0 && (best || quantity >= costs.minQuantity)) break
+    const spent = route.fixed + buyValue * (1 + costs.buyFee) + quantity * route.unit
+    const available = Math.min(askRemaining, bidRemaining, costs.maxQuantity - quantity)
+    const step = quantityWithinBudget(costs.capital, spent, unitCost, available)
+    if (!step) break
+
+    // Le bénéfice monte sur ce segment. Le rendement minimal impose une borne si sa
+    // marge marginale est sous le seuil, même lorsque la quantité maximale reste rentable.
+    const previousNet = sellValue * (1 - costs.sellFee) - spent
+    const slack = previousNet - costs.minReturn * spent
+    const slope = marginal - costs.minReturn * unitCost
+    const feasibleEnd = slope < 0 ? Math.min(step, Math.floor((slack + EPSILON) / -slope)) : step
+    const end = marginal > 0 ? feasibleEnd : costs.minQuantity - quantity
+    if (end > 0 && end <= feasibleEnd && quantity + end >= costs.minQuantity) {
+      const money = totals(buyValue + buy * end, sellValue + sell * end, quantity + end, costs, route)
+      if (Number.isFinite(money.net) && money.invested <= costs.capital + EPSILON
+        && money.net > EPSILON && money.net + EPSILON >= costs.minReturn * money.invested
+        && (!best || money.net > best.money.net)) {
+        best = { quantity: quantity + end, money, index: fills.length, lastQuantity: end }
+      }
+    }
+    fills.push({ buy, sell, quantity: step })
+    quantity += step
+    buyValue += buy * step
+    sellValue += sell * step
+    if (step < available) break
+    askRemaining -= step
+    bidRemaining -= step
+    if (!askRemaining) askRemaining = asks[++a]?.quantity ?? 0
+    if (!bidRemaining) bidRemaining = bids[++b]?.quantity ?? 0
+  }
+  if (!best) return null
+  return {
+    quantity: best.quantity, money: best.money,
+    fills: [...fills.slice(0, best.index), { ...fills[best.index], quantity: best.lastQuantity }],
+  }
+}
 
 export function ageHours(market: Market, now: number, demo: boolean) {
   return demo ? 0 : Math.max(0, (now - Date.parse(market.observedAt ?? '')) / 3600_000)

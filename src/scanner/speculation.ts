@@ -1,6 +1,8 @@
 import type { Market } from '../data.ts'
-import { ageHours, bookIsUsable, EPSILON, knownLevels, type Costs, type Financials, type Level, priceOutOfRange, quantityWithinBudget, rate, totals, validCosts } from './execution.ts'
+import { ageHours, bookIsUsable, fillsFor, knownLevels, type Costs, type Financials, type Level, priceOutOfRange, rate, totals, validCosts } from './execution.ts'
 import { DAY_MS, HISTORY_WINDOW, pairKey, type DailyPoint, type HistorySeries } from './history.ts'
+
+import { itinerary, type Departure, type Itinerary } from './itinerary.ts'
 
 const MIN_PRICED_DAYS = 14
 const MIN_CONSECUTIVE_RETURNS = 7
@@ -58,7 +60,9 @@ export function analyzeHistory(points: DailyPoint[], now: number) {
 
 export type HistoryStats = NonNullable<ReturnType<typeof analyzeHistory>['stats']>
 export type Speculation = {
-  market: Market
+  from: Market
+  to: Market
+  route: Itinerary
   quantity: number
   discount: number
   liquidity: number
@@ -68,33 +72,31 @@ export type Speculation = {
   scenarios: { price: number; money: Financials }[]
 }
 
-function fillEntry(levels: Level[], entryCeiling: number, historyVolume: number, costs: Costs) {
-  const max = Math.min(costs.maxQuantity, Math.floor(historyVolume))
-  const chosen: Level[] = []
-  let quantity = 0
-  let value = 0
-  for (const order of levels) {
-    if (order.price > entryCeiling || quantity === max) break
-    const step = quantityWithinBudget(costs.capital, value * (1 + costs.buyFee),
-      order.price * (1 + costs.buyFee), Math.min(order.quantity, max - quantity))
-    if (!step) break
-    chosen.push({ price: order.price, quantity: step })
-    quantity += step
-    value += order.price * step
-    if (step < order.quantity) break
-  }
-  return { quantity, value, chosen }
-}
-
-export function scanSpeculation(markets: Market[], history: HistorySeries[], costs: Costs, options: { now: number; demo: boolean }) {
+export function scanSpeculation(markets: Market[], history: HistorySeries[], costs: Costs, options: {
+  now: number; demo: boolean; departure: Departure; from: string; to: string
+}) {
   const opportunities: Speculation[] = []
   const insufficient: { market: Market; reason: string }[] = []
   if (!validCosts(costs)) return { opportunities, insufficient, usable: 0, stale: 0, uncovered: markets.length }
   const byPair = new Map(history.map(row => [pairKey(row.ticker, row.exchange), row.points]))
+  const purchases = new Map<string, { market: Market; asks: Level[] }[]>()
+  for (const market of markets) {
+    if (options.from && market.exchange !== options.from) continue
+    const factor = rate(costs, market.currency)
+    if (factor === null || !bookIsUsable(market, options.now, options.demo)) continue
+    const asks = knownLevels(market.sells, factor)
+    if (!asks.length) continue
+    const entry = { market, asks }
+    const existing = purchases.get(market.ticker)
+    if (existing) existing.push(entry)
+    else purchases.set(market.ticker, [entry])
+  }
+
   let usable = 0
   let stale = 0
   let uncovered = 0
   for (const market of markets) {
+    if (options.to && market.exchange !== options.to) continue
     const points = byPair.get(pairKey(market.ticker, market.exchange))
     if (!points) { uncovered++; continue }
     const result = analyzeHistory(points, options.now)
@@ -107,25 +109,30 @@ export function scanSpeculation(markets: Market[], history: HistorySeries[], cos
     if (stats.medianUnits < costs.minLiquidity || stats.medianUnits < costs.minQuantity) continue
     const reference = stats.median * factor
     if (!Number.isFinite(reference) || reference <= 0 || stats.threshold >= 1) continue
-    const ceiling = Math.min(reference * (1 - stats.threshold),
-      reference * (1 - costs.sellFee) / ((1 + costs.buyFee) * (1 + costs.minReturn)))
-    const allLevels = knownLevels(market.sells, factor)
-    // Une offre anormale au sommet met en doute l’exécution de toute entrée sur ce carnet.
-    if (!allLevels.length || priceOutOfRange(allLevels[0].price, reference)) continue
-    const entry = fillEntry(allLevels, ceiling, stats.medianUnits, costs)
-    if (entry.quantity < costs.minQuantity) continue
-    const scenarios = stats.prices.map(value => ({
-      price: value * factor, money: totals(entry.value, value * factor * entry.quantity, entry.quantity, costs, false),
-    }))
-    if (!scenarios.every(item => Number.isFinite(item.money.net))) continue
-    if (scenarios[1].money.net <= EPSILON || scenarios[1].money.yield + EPSILON < costs.minReturn) continue
-    const discount = 1 - entry.value / entry.quantity / reference
-    const loss = Math.min(1, Math.max(0, -scenarios[0].money.yield))
-    const risk = Math.min(100, Math.round(15 * ageHours(market, options.now, options.demo) / 3
-      + 25 * entry.quantity / stats.medianUnits + 25 * Math.min(1, stats.volatility / 0.2)
-      + 15 * (1 - stats.pricedDays / HISTORY_WINDOW) + 20 * loss))
-    opportunities.push({ market, quantity: entry.quantity, levels: entry.chosen, discount, stats,
-      risk, liquidity: stats.medianUnits, scenarios })
+    const ceiling = reference * (1 - stats.threshold)
+    const resale = [{ price: reference, quantity: Math.floor(stats.medianUnits) }]
+    for (const { market: from, asks } of purchases.get(market.ticker) ?? []) {
+      // Un prix anormal au meilleur niveau rend l’entrée douteuse.
+      if (priceOutOfRange(asks[0].price, reference)) continue
+      const route = itinerary(options.departure, from.exchange, market.exchange)
+      if (!route) continue
+      const entry = fillsFor(asks.filter(row => row.price <= ceiling), resale, costs, route)
+      if (!entry) continue
+      const scenarios = stats.prices.map(value => ({
+        price: value * factor,
+        money: totals(entry.money.buy, value * factor * entry.quantity, entry.quantity, costs, route),
+      }))
+      if (!scenarios.every(item => Number.isFinite(item.money.net))) continue
+      const discount = 1 - entry.money.buy / entry.quantity / reference
+      const loss = Math.min(1, Math.max(0, -scenarios[0].money.yield))
+      const age = Math.max(ageHours(from, options.now, options.demo), ageHours(market, options.now, options.demo))
+      const risk = Math.min(100, Math.round(15 * age / 3
+        + 25 * entry.quantity / stats.medianUnits + 25 * Math.min(1, stats.volatility / 0.2)
+        + 15 * (1 - stats.pricedDays / HISTORY_WINDOW) + 20 * loss))
+      opportunities.push({ from, to: market, route, quantity: entry.quantity,
+        levels: entry.fills.map(fill => ({ price: fill.buy, quantity: fill.quantity })), discount,
+        stats, risk, liquidity: stats.medianUnits, scenarios })
+    }
   }
   return { opportunities, insufficient, usable, stale, uncovered }
 }

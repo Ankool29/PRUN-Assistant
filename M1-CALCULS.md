@@ -21,7 +21,7 @@ Tous les calculs utilisent la devise de référence. Un taux explicite donne la 
 | Achat et revente | Somme du prix unitaire converti × quantité exécutée côté achat ou côté revente |
 | Bénéfice brut | Revente − achat |
 | Frais | Achat × taux d’achat, puis revente × taux de vente |
-| Transport | Montant fixe + quantité × coût par unité |
+| Transport | Coût du trajet à vide requis + montant fixe du trajet chargé requis + quantité × coût chargé par unité |
 | Capital mobilisé | Achat + frais d’achat + transport |
 | Bénéfice net | Revente − frais de vente − capital mobilisé |
 | Rendement | Bénéfice net ÷ capital mobilisé |
@@ -35,14 +35,24 @@ En mode **Ordre limite futur**, seule la capacité d’achat est simulée sur le
 - Au moins 14 clôtures valides sur les 30 derniers jours complets et au moins 7 rendements entre jours adjacents. La dernière clôture valide doit dater d’au plus trois jours UTC. Une clôture sans transaction n’alimente pas les prix. Un jour absent reste absent.
 - Une observation est écartée si son écart à la médiane dépasse le plus grand de 15 % de la médiane et six écarts absolus médians normalisés (MAD × 1,4826), ou si elle sort de la fourchette de 1/20 à 20 fois la médiane. L’écart-type quotidien est l’écart-type échantillonnal des rendements logarithmiques entre jours adjacents. La tendance donne la variation quotidienne d’une régression des logarithmes des clôtures sur le temps.
 - La décote minimale est le maximum de 5 % et de 1,5 fois le MAD normalisé rapporté à la médiane. Le simulateur part des meilleures offres d’achat pour l’utilisateur et ne dépasse pas le prix d’entrée compatible avec cette décote, les frais et le rendement neutre minimal.
-- La quantité est bornée par le carnet, le capital, les filtres et le volume quotidien médian. Les jours à volume zéro, quand FIO les publie, comptent dans ce volume. Les scénarios réutilisent les frais de transaction et supposent une revente sur la même bourse.
+- La quantité est bornée par le carnet, le capital, les filtres et le volume quotidien médian. Les jours à volume zéro, quand FIO les publie, comptent dans ce volume. Les scénarios réutilisent les frais de transaction, les coûts de l’itinéraire et les clôtures de la bourse de revente sélectionnée. Une revente sur place reste possible.
 - Les prix de revente pessimiste, neutre et optimiste correspondent aux quantiles empiriques 20 %, 50 % et 80 % des clôtures valides, interpolés linéairement. Les quantiles fournissent des hypothèses de prix, sans donner de probabilité ni de délai d’exécution.
+
+## M1.1 · Position du vaisseau
+
+Les profils, le marché de stationnement, le vaisseau sélectionné et les tarifs par devise sont conservés dans le navigateur. Les profils de démonstration ont leur propre stockage. Un nouveau profil FIO demande de choisir son marché de stationnement. La devise suit ce marché jusqu’à une sélection explicite.
+
+**Départ de mon marché** filtre les achats sur le marché de stationnement. **Toutes les bourses** conserve ces achats en premier et affiche les achats ailleurs dans la section **Avec trajet à vide**. En spéculation, les reventes sur d’autres bourses sont proposées avant les reventes sur place du groupe local. Les classements s’appliquent à l’intérieur de ces groupes.
+
+L’itinéraire couvre le déplacement à vide du stationnement à l’achat, puis le transport chargé de l’achat à la revente, lorsque ces segments sont nécessaires. Il se termine au marché de revente. Les tarifs estimés par trajet sont communs aux liaisons pour un vaisseau et une devise donnés. Le prix à vide est un forfait. Le prix chargé comprend un forfait et un coût par unité. Chaque montant nécessaire doit être renseigné. Une saisie explicite de zéro est admise, et un champ vide exclut le trajet concerné. Une opération sur place au marché actuel ne requiert aucun transport.
+
+Les deux moteurs imputent les mêmes segments au capital et au bénéfice net. Le moteur de spéculation utilise le carnet du lieu d’achat et les quantiles historiques du lieu de revente. La quantité reste plafonnée par le carnet, le volume médian de destination et les filtres de capital, de liquidité et de rendement.
 
 ## Classements et limites
 
 Le classement utilise le bénéfice net, le rendement ou un score de risque de 0 à 100, avec les valeurs faibles en premier pour le risque. En arbitrage, le score ajoute l’âge relatif des cotations (jusqu’à 20 points), la part de profondeur consommée (40), l’ordre limite (30) et le change entre bourses (10). En spéculation, il combine âge (15), part du volume médian (25), volatilité plafonnée à 20 % par jour (25), manque de couverture (15) et perte dans le scénario pessimiste (20). Ce score est une heuristique, sans calibration statistique.
 
-Le moteur emploie les nombres JavaScript et arrondit pour l’affichage. Les frais de 1 % par côté et le transport nul au premier chargement sont des hypothèses modifiables. Chaque ligne utilise le capital indépendamment des autres lignes. Les analyses partagent donc potentiellement le même capital et les mêmes ordres. Les frais fixes atypiques, taxes, disponibilités de fret et délais de transfert du jeu doivent être évalués par le joueur. Le scanner n’envoie aucun ordre ni transaction.
+Le moteur emploie les nombres JavaScript et arrondit pour l’affichage. Les frais de 1 % par côté sont des hypothèses modifiables. Les tarifs de transport réels commencent sans valeur. Chaque ligne utilise le capital indépendamment des autres lignes. Les analyses partagent donc potentiellement le même capital et les mêmes ordres. Les frais fixes atypiques, taxes, disponibilités de fret et délais de transfert du jeu doivent être évalués par le joueur. Le scanner n’envoie aucun ordre ni transaction.
 
 ## Reproduction et prévisualisation
 
