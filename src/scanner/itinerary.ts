@@ -41,10 +41,10 @@ export function resolveTransport(departure: Departure, buy: string, sell: string
   const add = (from: string, to: string, kind: Leg['kind'], fixed: number | null, unit: number | null) => {
     if (from === to) return
     const quoted = departure.planner?.(from, to, kind === 'loaded' ? ticker : '') ?? { flights: [], reasons: [] }
-    const variants: { leg: Leg; quantity: number | null }[] = quoted.flights.map(({ flight, quantity }) => ({
+    const variants: { leg: Leg; quantity: number | null }[] = quoted.flights.flatMap(({ flight, quantity }) => flight.total === null ? [] : [{
       leg: { from, to, kind, fixed: flight.total, unit: 0, flight },
       quantity: kind === 'loaded' ? quantity : null,
-    }))
+    }])
     if (!variants.length && known(fixed) && known(unit)) variants.push({ leg: { from, to, kind, fixed, unit }, quantity: null })
     if (!variants.length) reasons.push(...[...quoted.reasons,
       kind === 'empty' ? 'Forfait manuel à vide manquant.' : 'Forfait ou coût unitaire chargé manquant.',

@@ -166,11 +166,15 @@ footer span { margin: 0 .25rem; }
   .source-bar { grid-template-columns: 1fr; }
 }
 .scanner-full { display: none; }
-.scanner-tabs { margin-bottom: .85rem; }
+.scanner-tabs { margin-bottom: .85rem; flex-wrap: wrap; }
 .scanner-controls, .history-status { border: 1px solid var(--line); border-radius: 11px; background: var(--panel); padding: .85rem; margin-bottom: .85rem; }
 .scanner-grid { display: grid; gap: .75rem; align-items: end; grid-template-columns: minmax(0, 1fr); }
 .scanner-controls > p { margin-top: .65rem; font-size: .875rem; line-height: 1.5; }
-.scanner-grid input[type="number"] { width: 100%; min-width: 0; min-height: 46px; border: 1px solid var(--line); border-radius: 8px; background: #11191c; color: #ecf4f1; padding: .5rem .65rem; font-size: 1rem; }
+.scanner-grid :is(input[type="number"], input[type="datetime-local"]) { width: 100%; min-width: 0; min-height: 46px; border: 1px solid var(--line); border-radius: 8px; background: #11191c; color: #ecf4f1; padding: .5rem .65rem; font-size: 1rem; }
+.circuit-fx-form { margin-block: .75rem; }
+.circuit-fx-form button { margin: .25rem .45rem .25rem 0; }
+.circuit-check { display: flex; gap: .55rem; align-items: center; min-height: 44px; margin-top: .5rem; }
+.circuit-check input { width: 20px; height: 20px; flex: none; }
 .scanner-grid select, .scanner-grid .search { background: #11191c; }
 .scanner-options { margin-top: .65rem; }
 .scanner-options summary { cursor: pointer; min-height: 44px; padding: .6rem .1rem; color: var(--green); }

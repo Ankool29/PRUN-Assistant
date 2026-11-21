@@ -16,9 +16,12 @@ import { createFlightPlanner, loadNavigation, type NavigationData } from '../sca
 
 import { useExchangeRates } from '../scanner/exchangeRates.ts'
 import { GrossPrices } from '../scanner/GrossPrices.tsx'
+import { CircuitPanel } from '../scanner/CircuitPanel.tsx'
+import { useFxBoard } from '../scanner/FxSettings.tsx'
+import { fxKey } from '../scanner/fxBook.ts'
 
 type Sort = 'net' | 'yield' | 'risk'
-type Panel = 'arbitrage' | 'speculation'
+type Panel = 'arbitrage' | 'speculation' | 'circuit'
 type Scope = 'local' | 'all'
 const defaults = {
   capital: '100000', buyFee: '1', sellFee: '1',
@@ -79,6 +82,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const [currencyOverride, setCurrency] = useState('')
   const currency = currencyOverride || parked?.currency || currencies[0]
   const [exchangeRates, setExchangeRates] = useExchangeRates(data.source)
+  const [fxBoard, setFxBoard] = useFxBoard(data.source)
   const rates = exchangeRates[currency] ?? {}
   const tariffForm = ships.current.byCurrency[currency] ?? unknownTariffs
   const transport: TransportRates = {
@@ -224,6 +228,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
     <div className="switch scanner-tabs" role="group" aria-label="Moteur d’analyse">
       <button aria-pressed={panel === 'arbitrage'} onClick={() => {setPanel('arbitrage'); setLimit(PAGE_SIZE)}}>Arbitrage</button>
       <button aria-pressed={panel === 'speculation'} onClick={() => {setPanel('speculation'); setLimit(PAGE_SIZE)}}>Spéculation</button>
+      <button aria-pressed={panel === 'circuit'} onClick={() => setPanel('circuit')}>Circuits multidevises</button>
     </div>
     <section className="scanner-controls" aria-label="Filtres et paramètres de simulation">
       <div className="scanner-grid">
@@ -238,7 +243,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
           setBudgets(previous => ({ ...previous, [currency]: value })); setLimit(PAGE_SIZE)
         }}/>
         {field('minReturn', 'Rendement minimal (%)')}
-        {field('minLiquidity', panel === 'arbitrage' ? 'Profondeur minimale (unités)' : 'Volume médian minimal (unités/j)')}
+        {field('minLiquidity', panel === 'speculation' ? 'Volume médian minimal (unités/j)' : 'Profondeur minimale (unités)')}
       </div>
       <details className="scanner-options">
         <summary>Frais, transport, quantités et change</summary>
@@ -252,9 +257,9 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
           {field('maxQuantity', 'Quantité maximale', { step: '1', min: 1 })}
         </div>
       </details>
-      <details className="scanner-options">
+      {panel !== 'circuit' && <details className="scanner-options">
         <summary>Taux de change APEX · {currencies.filter(code => code !== currency && (knownTariff(rates[code] ?? '') ?? 0) > 0).length} sur {currencies.length - 1}</summary>
-        <p className="muted scanner-gap-intro">Relevez le taux dans FX ou FXOB. Saisissez la valeur d’une unité de la devise locale en {currency}. Les taux sont des hypothèses de simulation, mémorisées dans ce navigateur.</p>
+        <p className="muted scanner-gap-intro">Ces taux indicatifs servent à exprimer les résultats dans la devise de référence. Le carnet FXOB et la liquidité du change sont disponibles dans « Circuits multidevises ».</p>
         <div className="scanner-grid">
           {currencies.filter(code => code !== currency).map(code => <NumericField key={code} label={`1 ${code} en ${currency}`}
             placeholder="Sans conversion" value={rates[code] ?? ''} onChange={value => {
@@ -263,8 +268,8 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
         </div>
         {ratesInvalid && <p role="status" className="error">Les taux invalides doivent être corrigés. Ils sont traités comme absents pour les paires concernées.</p>}
         <a className="button" href="https://handbook.apex.prosperousuniverse.com/tutorials/legacy-tutorials/foreign-exchange/" target="_blank" rel="noreferrer">Guide du change dans APEX</a>
-      </details>
-      <p className="muted">Les tarifs saisis sont des estimations par trajet, dans la devise affichée. Le trajet se termine à la bourse de revente. Renseignez un taux pour inclure une autre devise.</p>
+      </details>}
+      <p className="muted">Les tarifs saisis sont des estimations par trajet, dans la devise affichée. Le trajet se termine à la bourse de revente.</p>
       {panel === 'arbitrage' && <div className="scanner-grid scanner-mode">
         <label className="field"><span>Mode de revente</span><select value={mode} onChange={event => {setMode(event.target.value as SaleMode); setLimit(PAGE_SIZE)}}>
           <option value="immediate">Vente immédiate</option><option value="limit">Ordre limite futur</option>
@@ -280,6 +285,12 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
       <p className="scanner-notice">Coût de transport inconnu ou non vérifié pour certaines pistes. Consultez « À vérifier » et renseignez un relevé SFC ou les tarifs de secours.</p>}
     {!snapshotUsable && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
     {invalid && <Empty>Vérifiez les paramètres de simulation. Le capital doit être positif, et les quantités entières et cohérentes.</Empty>}
+    {panel === 'circuit' ? <CircuitPanel data={data} markets={matching} currencies={currencies} now={now}
+      parking={parking} origin={origin} destination={to} costs={costs} invalid={invalid} ship={ships.current.navigation}
+      navigation={navigation} transport={transport} board={fxBoard}
+      save={quote => setFxBoard(previous => ({ ...previous, [fxKey(quote.base, quote.reference)]: quote }))}
+      remove={base => setFxBoard(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== fxKey(base, currency))))}
+    /> : <>
     {panel === 'speculation' && <section className="history-status" aria-label="État des historiques">
       <p>{demo ? 'Séries historiques fictives.'
         : history ? `Historique collecté le ${formatTime(history.collectedAt)} · ${history.series.length} paires embarquées${history.failed.length ? ` · ${history.failed.length} échecs` : ''}`
@@ -325,10 +336,18 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
       parking={parking} currency={currency} navigation={navigation} snapshotUsable={snapshotUsable} invalid={invalid}
       speculation={panel === 'speculation'} stages={arbitrageReport?.stages}/>
     {arbitrageReport && <GrossPrices quotes={arbitrageReport.gaps} localCandidates={arbitrageReport.localCandidates}
-      source={data.source} now={now} currency={currency} financeReady={financeReady} selectCurrency={code => {
+      source={data.source} now={now} currency={currency} financeReady={financeReady} study={(buy, sell) => {
+        setScope(buy.exchange === parking ? 'local' : 'all')
+        setFrom(buy.exchange)
+        setTo(sell.exchange)
+        setQuery(buy.ticker)
+        setPanel('circuit')
+        window.scrollTo(0, 0)
+      }} selectCurrency={code => {
         setCurrency(code)
         setBudgets(previous => ({ ...previous, [code]: previous[code] ?? '' }))
         setLimit(PAGE_SIZE)
       }}/>}
+    </>}
   </>
 }

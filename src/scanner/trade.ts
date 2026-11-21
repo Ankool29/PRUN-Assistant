@@ -21,7 +21,7 @@ export function indicativeLocalTrade(asks: Level[], bids: Level[], costs: Costs)
   return fill && { quantity: fill.quantity, margin: fill.money.gross - fill.money.buyFee - fill.money.sellFee }
 }
 
-function remaining(levels: Level[], consumed: number) {
+export function remaining(levels: Level[], consumed: number) {
   return levels.flatMap(row => {
     const taken = Math.min(consumed, row.quantity)
     consumed -= taken

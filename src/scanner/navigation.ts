@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { Snapshot } from '../data.ts'
 import { staticDataUrl } from '../staticData.ts'
 import { bookIsUsable, knownLevels, rate, type Costs } from './execution.ts'
+import type { Payment } from './circuit.ts'
 
 const positive = z.number().finite().positive()
 const amount = z.number().finite().nonnegative()
@@ -37,7 +38,8 @@ const navSchema = z.object({
 export type NavigationData = z.infer<typeof navSchema>
 export type Flight = {
   mode: FlightQuote['mode']; minutes: number; distancePc: number | null; distanceKm: number | null
-  fuel: { ticker: string; units: number; cost: number }[]; extra: number; total: number
+  fuel: { ticker: string; units: number; cost: number }[]; extra: number; total: number | null
+  payments: Payment[]
   cargoT: number; cargoM3: number; mass: number
 }
 export const modes = { stl: 'STL', ftl: 'FTL conventionnel', gateway: 'Via portail' } as const
@@ -56,28 +58,34 @@ export function marketPaths(data: NavigationData | null, from: string, to: strin
   return data?.routes.filter(route => route.from === from && route.to === to) ?? []
 }
 
-export function priceFuel(data: Snapshot, exchange: string, ticker: string, units: number, costs: Costs, now: number) {
+function nativeFuel(data: Snapshot, exchange: string, ticker: string, units: number, buyFee: number, now: number) {
   if (!Number.isSafeInteger(units) || units < 0) return { reason: `${ticker} : quantité de carburant invalide.` }
-  if (!units) return { cost: 0 }
   const row = data.markets.find(item => item.exchange === exchange && item.ticker === ticker)
   if (!row) return { reason: `${ticker} · ${exchange} : carnet absent.` }
   if (!bookIsUsable(row, now, data.source === 'demo')) return { reason: `${ticker} · ${exchange} : carnet de carburant ancien.` }
-  const conversion = rate(costs, row.currency)
-  if (conversion === null) return { reason: `${ticker} · ${exchange} : taux ${row.currency} vers ${costs.currency} manquant.` }
   let remaining = units
   let value = 0
-  for (const level of knownLevels(row.sells, conversion)) {
+  for (const level of knownLevels(row.sells, 1)) {
     const used = Math.min(remaining, level.quantity)
     value += used * level.price
     remaining -= used
     if (!remaining) break
   }
-  const cost = value * (1 + costs.buyFee)
+  const cost = value * (1 + buyFee)
   return remaining || !Number.isFinite(cost) ? { reason: `${ticker} · ${exchange} : volume chiffrable insuffisant (${units} unités requises).` }
-    : { cost }
+    : { cost, currency: row.currency }
 }
 
-export function createFlightPlanner(data: Snapshot, nav: NavigationData | null, ship: ShipNavigation, costs: Costs, now: number) {
+export function priceFuel(data: Snapshot, exchange: string, ticker: string, units: number, costs: Costs, now: number) {
+  if (!units) return { cost: 0 }
+  const native = nativeFuel(data, exchange, ticker, units, costs.buyFee, now)
+  if (native.reason !== undefined) return { reason: native.reason }
+  const conversion = rate(costs, native.currency!)
+  const cost = native.cost! * (conversion ?? NaN)
+  return Number.isFinite(cost) ? { cost } : { reason: `${ticker} · ${exchange} : taux ou montant ${native.currency} vers ${costs.currency} manquant.` }
+}
+
+export function createFlightPlanner(data: Snapshot, nav: NavigationData | null, ship: ShipNavigation, costs: Costs, now: number, nativeOnly = false) {
   const stationSystems = new Map(nav?.stations.map(row => [row.exchange, row.system]))
   const cache = new Map<FlightQuote, ReturnType<typeof estimate>>()
 
@@ -104,22 +112,30 @@ export function createFlightPlanner(data: Snapshot, nav: NavigationData | null, 
       else if (cargoM3 > ship.cargoM3 + 1e-8) missing.push('Capacité de fret en m³ dépassée.')
     }
     const fuel: Flight['fuel'] = []
+    const payments: Payment[] = []
     for (const [ticker, qty, tank] of [['SF', quote.sf, ship.sfTank], ['FF', quote.ff, ship.ffTank]] as const) {
       if (!qty) continue
       if (tank === null) missing.push(`Capacité du réservoir ${ticker} en unités.`)
       else if (qty > tank) missing.push(`Capacité du réservoir ${ticker} dépassée.`)
-      const priced = priceFuel(data, quote.from, ticker, qty, costs, now)
+      const priced = nativeOnly ? nativeFuel(data, quote.from, ticker, qty, costs.buyFee, now)
+        : priceFuel(data, quote.from, ticker, qty, costs, now)
       if (priced.reason) missing.push(priced.reason)
-      else if (priced.cost !== undefined) fuel.push({ ticker, units: qty, cost: priced.cost })
+      else if (priced.cost !== undefined) {
+        fuel.push({ ticker, units: qty, cost: priced.cost })
+        if (nativeOnly && 'currency' in priced && typeof priced.currency === 'string')
+          payments.push({ currency: priced.currency, amount: priced.cost, label: `${quote.from} · ${qty} ${ticker}, frais inclus` })
+      }
     }
-    const conversion = quote.extra ? rate(costs, quote.currency) : 1
+    if (nativeOnly && quote.extra)
+      payments.push({ currency: quote.currency, amount: quote.extra, label: `${quote.from} → ${quote.to} · frais du vol` })
+    const conversion = !nativeOnly && quote.extra ? rate(costs, quote.currency) : 1
     if (conversion === null) missing.push(`Taux ${quote.currency} vers ${costs.currency} pour les frais.`)
     const extra = quote.extra * (conversion ?? NaN)
-    const total = extra + fuel.reduce((sum, row) => sum + row.cost, 0)
-    if (!Number.isFinite(total) && !missing.length) missing.push('Montant de transport non chiffrable.')
+    const total = nativeOnly ? null : extra + fuel.reduce((sum, row) => sum + row.cost, 0)
+    if (total !== null && !Number.isFinite(total) && !missing.length) missing.push('Montant de transport non chiffrable.')
     if (missing.length) return { missing }
     const flight: Flight = { mode: quote.mode, minutes: quote.minutes, distancePc: quote.distancePc, distanceKm: quote.distanceKm,
-      fuel, extra, total, cargoT, cargoM3, mass: ship.mass! + cargoT }
+      fuel, extra, total, payments, cargoT, cargoM3, mass: ship.mass! + cargoT }
     return { flight }
   }
 

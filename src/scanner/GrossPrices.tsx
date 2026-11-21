@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { formatPrice, formatTime, numeric } from '../domain.ts'
 import { PAGE_SIZE, ShowMore, Status } from '../ui.tsx'
 import type { GrossGap } from './arbitrage.ts'
+import type { Market } from '../data.ts'
 
 type Filter = 'all' | 'native' | 'fx' | 'old'
-export function GrossPrices({ quotes, localCandidates, source, now, currency, financeReady, selectCurrency }: {
+export function GrossPrices({ quotes, localCandidates, source, now, currency, financeReady, selectCurrency, study }: {
   quotes: GrossGap[]; localCandidates: number; source: 'demo' | 'fio'; now: number; currency: string;
-  financeReady: boolean; selectCurrency: (currency: string) => void
+  financeReady: boolean; selectCurrency: (currency: string) => void; study: (buy: Market, sell: Market) => void
 }) {
   const [filter, setFilter] = useState<Filter>('all')
   const [visible, setVisible] = useState(PAGE_SIZE)
@@ -52,6 +53,7 @@ export function GrossPrices({ quotes, localCandidates, source, now, currency, fi
           {!row.recent && <p>Comparaison financière suspendue pour ces carnets anciens ou sans date fiable.</p>}
           {both && !same && row.difference === null && <p>Écart monétaire et bénéfice net indéterminés · taux manquant pour comparer {row.from.currency} et {row.to.currency} en {currency}.</p>}
           {row.localMarket && <p>Marge de marché locale après frais · {formatPrice(row.localMarket.margin)} {row.from.currency} pour {numeric(row.localMarket.quantity)} unités, avant capital et transport.</p>}
+          {row.recent && both && <button className="button" onClick={() => study(row.from, row.to)}>Étudier le circuit</button>}
           {row.recent && both && same && row.from.currency !== currency && <>
             <p>Le prix se compare en {row.from.currency}. Le calcul avec le capital en {currency} demande un taux de change ou un budget en {row.from.currency}.</p>
             <button className="button" onClick={() => selectCurrency(row.from.currency)}>Évaluer en {row.from.currency}</button>
