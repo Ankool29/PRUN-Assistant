@@ -67,6 +67,7 @@ jobs:
           test -s dist/preview/m1/index.html
           test -s dist/preview/m1/data/fio.json
           test -s dist/preview/m1/data/history.json
+          test -s dist/preview/m1/data/navigation.json
           grep -q '/PRUN-Assistant/preview/m1/assets/' dist/preview/m1/index.html
       - uses: actions/upload-pages-artifact@v4
         with:
@@ -98,7 +99,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           # Révision testée de la PR #2. Ce job ne possède aucun droit de déploiement.
-          ref: 0cd16fea4abe40a1e9d3a9ab85050f9cec93d716
+          ref: 5c60f88e7b1dd4af43bf4dcda4f1d64a52bccbd9
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
@@ -110,6 +111,7 @@ jobs:
       - run: npm ci
       - run: python -m collector.collect
       - run: python -m collector.history
+      - run: python -m collector.navigation || echo "::warning::Carte FIO de la branche conservée."
       - run: npm run build -- --base=/PRUN-Assistant/preview/m1/
       - uses: actions/upload-artifact@v4
         with:
