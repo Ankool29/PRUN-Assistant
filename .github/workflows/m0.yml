@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           # Révision testée de la PR #2. Ce job ne possède aucun droit de déploiement.
-          ref: 5c60f88e7b1dd4af43bf4dcda4f1d64a52bccbd9
+          ref: eddbc158cd7c42d3bc77f14fd551aba1965ea70e
           persist-credentials: false
       - uses: actions/setup-node@v5
         with:
