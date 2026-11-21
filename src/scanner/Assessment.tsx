@@ -4,11 +4,12 @@ import { formatPrice, numeric } from '../domain.ts'
 import { Alternatives, Travel } from './details.tsx'
 import { MapPaths } from './FlightSettings.tsx'
 import type { NavigationData } from './navigation.ts'
+import { stageLabels, type Stages } from './arbitrage.ts'
 import type { Deficit, Diagnostics, Review } from './trade.ts'
 
-export function Assessment({ diagnostics, reviews, deficits, snapshotUsable, invalid, parking, currency, navigation, speculation }: {
+export function Assessment({ diagnostics, reviews, deficits, snapshotUsable, invalid, parking, currency, navigation, speculation, stages }: {
   diagnostics: Diagnostics; reviews: Review[]; deficits: Deficit[]; snapshotUsable: boolean; invalid: boolean
-  parking: string; currency: string; navigation: NavigationData | null; speculation: boolean
+  parking: string; currency: string; navigation: NavigationData | null; speculation: boolean; stages?: Stages
 }) {
   const [visible, setVisible] = useState(PAGE_SIZE)
   const entries = Object.entries(diagnostics).sort((a, b) => b[1] - a[1])
@@ -21,6 +22,11 @@ export function Assessment({ diagnostics, reviews, deficits, snapshotUsable, inv
       <summary>Diagnostic · {numeric(exclusions)} exclusions</summary>
       <p>{speculation ? 'Les compteurs portent sur les carnets d’achat, les historiques de revente ou les comparaisons selon le contrôle.'
         : 'Chaque comparaison de carnets reçoit le premier motif d’exclusion rencontré.'}</p>
+      {stages && <dl className="scanner-stage-counts" aria-label="Comparaisons franchissant chaque filtre">
+        {(Object.keys(stageLabels) as (keyof Stages)[]).map(key => <div key={key}>
+          <dt>{stageLabels[key]}</dt><dd>{numeric(stages[key])}</dd>
+        </div>)}
+      </dl>}
       {!parking && <p>Marché de stationnement non renseigné.</p>}
       {!snapshotUsable && <p>Analyse suspendue avant comparaison · instantané FIO trop ancien ou sans date fiable.</p>}
       {invalid && <p>Analyse suspendue avant comparaison · filtres ou taux de change invalides.</p>}

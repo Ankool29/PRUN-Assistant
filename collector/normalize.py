@@ -1,5 +1,6 @@
 """Adaptateurs FIO REST vers le contrat public M0."""
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 from math import isfinite
 
 
@@ -35,15 +36,22 @@ def number(row, key, *, nullable=False, integer=False):
     return value
 
 
-def timestamp(row, key):
-    value = text(row, key)
+FIO_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?"
+    r"(?:Z|[+-](?P<hours>[0-9]{2}):?(?P<minutes>[0-9]{2}))"
+)
+
+
+def quote_timestamp(value):
+    match = FIO_TIMESTAMP.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        return None
+    if match["hours"] is not None and (int(match["hours"]) > 23 or int(match["minutes"]) > 59):
+        return None
     try:
-        date = datetime.fromisoformat(value)
-        if date.utcoffset() is None:
-            raise ValueError
-    except ValueError:
-        raise InvalidData(f"{key} : date avec fuseau attendue") from None
-    return date.isoformat(timespec="milliseconds")
+        return datetime.fromisoformat(value).astimezone(timezone.utc).isoformat(timespec="milliseconds")
+    except (ValueError, OverflowError):
+        return None
 
 
 def amounts(row, key, ticker_key="Ticker"):
@@ -106,7 +114,7 @@ def orders(row, key, *, descending=False):
 def market(row):
     return {
         "ticker": text(row, "MaterialTicker"), "exchange": text(row, "ExchangeCode"),
-        "currency": text(row, "Currency"), "observedAt": timestamp(row, "Timestamp"),
+        "currency": text(row, "Currency"), "observedAt": quote_timestamp(row.get("Timestamp")),
         "lastTradeAtMs": number(row, "PriceTimeEpochMs", nullable=True, integer=True),
         "last": number(row, "Price", nullable=True), "average": number(row, "PriceAverage", nullable=True),
         "bid": number(row, "Bid", nullable=True), "ask": number(row, "Ask", nullable=True),

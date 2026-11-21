@@ -45,3 +45,5 @@ Voir [l’audit FIO](FIO-AUDIT.md), [l’architecture](ARCHITECTURE.md), [les d�
 Voir le [rapport M1](M1-CALCULS.md) pour les formules, les limites des scénarios et la prévisualisation du build CI.
 
 Voir le [rapport M1.2 sur la navigation](M1.2-NAVIGATION.md) pour les exclusions, les relevés SFC et les prix FIO du carburant.
+
+Le [rapport du correctif du scanner](CORRECTIF-SCANNER.md) détaille la reproduction, la fraîcheur et les écarts consultables sans change.

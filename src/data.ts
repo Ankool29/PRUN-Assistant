@@ -1,10 +1,12 @@
+import { quoteTime } from './quoteTime.ts'
 import { staticDataUrl } from './staticData.ts'
 import { z } from 'zod'
 import demoData from '../data/demo.json'
 
 const number = z.number().finite().nonnegative()
 const integer = number.int().safe()
-const date = z.string().datetime({ offset: true })
+const date = z.string().refine(value => quoteTime(value) !== null)
+const observedDate = z.unknown().transform(value => typeof value === 'string' && quoteTime(value) !== null ? value : null)
 const text = z.string().min(1)
 const amount = z.object({ ticker: text, quantity: integer })
 const order = z.object({ price: number, quantity: integer.nullable() })
@@ -16,7 +18,7 @@ export const snapshotSchema = z.object({
   materials: z.array(z.object({ ticker: text, name: text, category: text, weight: number, volume: number })).nonempty(),
   exchanges: z.array(z.object({ code: text, name: text, station: text, currency: text, decimals: integer })).nonempty(),
   markets: z.array(z.object({
-    ticker: text, exchange: text, currency: text, observedAt: date.nullable(),
+    ticker: text, exchange: text, currency: text, observedAt: observedDate,
     lastTradeAtMs: integer.max(8.64e15).nullable(),
     bid: number.nullable(), ask: number.nullable(), last: number.nullable(), average: number.nullable(),
     marketMakerBuy: number.nullable(), marketMakerSell: number.nullable(),
@@ -31,8 +33,8 @@ export const snapshotSchema = z.object({
     inputs: z.array(amount), outputs: z.array(amount),
   })).nonempty(),
 }).superRefine((value, context) => {
-  if (value.source === 'fio' && (!value.collectedAt || value.markets.some(row => !row.observedAt))) {
-    context.addIssue({ code: 'custom', message: 'Horodatage FIO absent' })
+  if (value.source === 'fio' && !value.collectedAt) {
+    context.addIssue({ code: 'custom', message: 'Horodatage de collecte FIO absent' })
   }
 })
 

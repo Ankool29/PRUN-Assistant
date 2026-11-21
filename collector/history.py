@@ -27,6 +27,8 @@ def select_pairs(snapshot, now_ms, per_exchange=PAIRS_PER_EXCHANGE):
         traded = item["lastTradeAtMs"]
         if not traded or not 0 <= now_ms - traded < 7 * DAY_MS:
             continue
+        if item["observedAt"] is None:
+            continue
         observed = datetime.fromisoformat(item["observedAt"]).timestamp() * 1000
         if not -300_000 <= now_ms - observed <= 3 * 3600_000:
             continue

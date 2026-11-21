@@ -16,6 +16,11 @@ export type Calculated = {
 export type Deficit = Review & Calculated & { alternatives: Calculated[] }
 const withoutTravel: Itinerary = { legs: [], fixed: 0, unit: 0 }
 
+export function indicativeLocalTrade(asks: Level[], bids: Level[], costs: Costs) {
+  const fill = fillsFor(asks, bids, { ...costs, capital: Number.MAX_VALUE }, withoutTravel)
+  return fill && { quantity: fill.quantity, margin: fill.money.gross - fill.money.buyFee - fill.money.sellFee }
+}
+
 function remaining(levels: Level[], consumed: number) {
   return levels.flatMap(row => {
     const taken = Math.min(consumed, row.quantity)
@@ -80,7 +85,7 @@ export function assessTrade(from: Market, to: Market, asks: Level[], bids: Level
   const { choices, reasons } = resolveTransport(departure, from.exchange, to.exchange, from.ticker)
   if (!choices.length) {
     count(diagnostics, 'Transport à vérifier')
-    return { review: { ...review, reasons } }
+    return { commercial: true, review: { ...review, reasons } }
   }
 
   const positives: Calculated[] = []
@@ -117,17 +122,17 @@ export function assessTrade(from: Market, to: Market, asks: Level[], bids: Level
   }
   positives.sort((a, b) => b.money.net - a.money.net)
   deficits.sort((a, b) => b.money.net - a.money.net)
-  if (positives.length) return { confirmed: positives[0], alternatives: [...positives.slice(1), ...deficits] }
+  if (positives.length) return { commercial: true, confirmed: positives[0], alternatives: [...positives.slice(1), ...deficits] }
   if (deficits.length) {
     count(diagnostics, 'Déficit après transport')
-    return { deficit: { ...review, ...deficits[0], reasons: [], alternatives: deficits.slice(1) } }
+    return { commercial: true, deficit: { ...review, ...deficits[0], reasons: [], alternatives: deficits.slice(1) } }
   }
   if (failedQuote || reasons.length) {
     count(diagnostics, 'Transport à vérifier')
-    return { review: { ...review, reasons: [...new Set([...reasons,
+    return { commercial: true, review: { ...review, reasons: [...new Set([...reasons,
       ...(failedQuote ? ['Quantité du relevé SFC incompatible avec le carnet, les filtres ou le capital après ravitaillement.'] : []),
     ])] } }
   }
   count(diagnostics, 'Capital, quantité ou rendement après transport')
-  return {}
+  return { commercial: true }
 }

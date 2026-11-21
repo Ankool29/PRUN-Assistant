@@ -1,9 +1,12 @@
+import { quoteTime } from './quoteTime.ts'
+
 export const FRESH_WINDOW_MS = 3 * 60 * 60_000
 const CLOCK_SKEW_MS = 5 * 60_000
 
 export function freshness(timestamp: string | null, now: number) {
-  if (!timestamp) return 'unknown'
-  const age = now - Date.parse(timestamp)
+  const observed = quoteTime(timestamp)
+  if (observed === null) return 'unknown'
+  const age = now - observed
   if (!Number.isFinite(age) || age < -CLOCK_SKEW_MS) return 'unknown'
   return age <= FRESH_WINDOW_MS ? 'fresh' : 'stale'
 }
@@ -47,7 +50,10 @@ const quantityFormat = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 4
 export const numeric = (value: number | null) => value === null ? '—' : quantityFormat.format(value)
 
 const timeFormat = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })
-export const formatTime = (date: string | number | null) => date === null ? '—' : `${timeFormat.format(new Date(date))} UTC`
+export function formatTime(date: string | number | null) {
+  const ms = typeof date === 'number' ? date : quoteTime(date)
+  return ms === null || !Number.isFinite(ms) || Math.abs(ms) > 8.64e15 ? '—' : `${timeFormat.format(ms)} UTC`
+}
 
 export function formatPrice(value: number | null, decimals = 2) {
   const places = Math.min(decimals, 8)

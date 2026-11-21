@@ -1,5 +1,6 @@
 import type { Market, Order } from '../data.ts'
 import type { Itinerary } from './itinerary.ts'
+import { quoteTime } from '../quoteTime.ts'
 import { freshness } from '../domain.ts'
 
 export type Costs = {
@@ -124,7 +125,7 @@ export function fillsFor(asks: Level[], bids: Level[], costs: Costs, route: Itin
 }
 
 export function ageHours(market: Market, now: number, demo: boolean) {
-  return demo ? 0 : Math.max(0, (now - Date.parse(market.observedAt ?? '')) / 3600_000)
+  return demo ? 0 : Math.max(0, (now - (quoteTime(market.observedAt) ?? NaN)) / 3600_000)
 }
 
 export function priceOutOfRange(price: number, reference: number) {

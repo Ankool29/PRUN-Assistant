@@ -37,7 +37,7 @@ test('avant transport, aucune piste à vérifier ne contient un bénéfice net',
   assert.equal(result.diagnostics['Transport à vérifier'], 1)
   assert.equal(result.diagnostics['Périmètre ou bourse filtrée'], 1)
   assert.equal(analyzeArbitrage([purchase, { ...sale, observedAt: null }], costs, options)
-    .diagnostics['Carnet trop ancien ou sans date'], 1)
+    .diagnostics['Horodatage du carnet indéterminé'], 1)
   assert.equal(analyzeArbitrage([purchase, { ...sale, buys: [] }], costs, options)
     .diagnostics['Carnet sans prix ou quantité exploitable'], 1)
   assert.equal(analyzeArbitrage([purchase, sale], { ...costs, minLiquidity: 11 }, options)
@@ -95,4 +95,42 @@ test('reproduction du défaut M1.1 sur le carnet FIO réel FEO entre Arclight et
   assert.equal(report.opportunities.length, 0)
   assert.equal(report.reviews.length, 1)
   assert.ok(Math.abs(report.reviews[0].margin - 6853.86) < 0.01)
+})
+
+test('arbres de compteurs stables et marge native sans change du capital', () => {
+  const foreignCapital = { ...costs, currency: 'AIC' }
+  const report = analyzeArbitrage([purchase, sale], foreignCapital, { ...options, from: '' })
+  assert.deepEqual(report.stages, { total: 2, scoped: 2, fresh: 2, prices: 1, liquid: 1,
+    comparable: 1, inReference: 0, assessed: 0, commercial: 0, net: 0 })
+  const native = report.gaps.find(row => row.from.exchange === 'CI2')
+  assert.equal(native?.difference, 100)
+  assert.equal(native?.differenceCurrency, 'CIS')
+  assert.deepEqual(native?.localMarket, { margin: 970, quantity: 10 })
+  assert.equal(report.localCandidates, 1)
+  assert.equal(report.diagnostics['Devise locale différente de celle du capital'], 1)
+  assert.equal(report.opportunities.length, 0)
+
+  const mixed = analyzeArbitrage([purchase, { ...sale, currency: 'NCC' }], costs, { ...options, from: '' })
+  const mixedGap = mixed.gaps.find(row => row.from.exchange === 'CI2')
+  assert.deepEqual([mixedGap?.purchase, mixedGap?.resale, mixedGap?.difference], [100, 200, null])
+  assert.equal(mixed.diagnostics['Taux de change interdevises absent'], 1)
+  const converted = analyzeArbitrage([purchase, { ...sale, currency: 'NCC' }], { ...costs, rates: { NCC: 1.1 } }, {
+    ...options, from: '',
+  })
+  assert.equal(converted.stages.assessed, 1)
+  assert.equal(converted.reviews.length, 1)
+  assert.equal(converted.stages.net, 0)
+})
+
+test('l’âge des deux carnets est évalué avant le change, indépendamment du sens', () => {
+  const stale = { ...sale, currency: 'AIC', observedAt: '2026-11-21T15:00:00-01:00' }
+  for (const markets of [[purchase, stale], [stale, purchase]]) {
+    const result = analyzeArbitrage(markets, { ...costs, currency: 'ICA' }, { ...options, from: '' })
+    assert.equal(result.stages.fresh, 0)
+    assert.equal(result.diagnostics['Carnet trop ancien'], 2)
+    assert.equal(result.diagnostics['Taux de change interdevises absent'], undefined)
+    assert.ok(result.gaps.length)
+    assert.ok(result.gaps.every(entry => !entry.recent))
+    assert.equal(result.opportunities.length, 0)
+  }
 })

@@ -1,3 +1,4 @@
+import { quoteTime } from '../quoteTime.ts'
 import type { Market } from '../data.ts'
 import { formatPrice, formatTime, numeric } from '../domain.ts'
 import { Status } from '../ui.tsx'
@@ -58,8 +59,9 @@ export function Alternatives({ items, currency, navigation }: {
 }
 
 function observationAge(timestamp: string | null, now: number) {
-  if (timestamp === null) return 'âge indéterminé'
-  const minutes = Math.max(0, Math.floor((now - Date.parse(timestamp)) / 60_000))
+  const ms = quoteTime(timestamp)
+  if (ms === null) return 'âge indéterminé'
+  const minutes = Math.max(0, Math.floor((now - ms) / 60_000))
   return minutes >= 60 ? `il y a ${Math.floor(minutes / 60)} h ${minutes % 60} min` : `il y a ${minutes} min`
 }
 

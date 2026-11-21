@@ -39,3 +39,19 @@ test('les instantanés distribués ont des sources distinctes', () => {
   assert.ok(demo.markets.every(row => row.observedAt === null))
   assert.ok(fio.markets.some(row => row.buys.length || row.sells.length))
 })
+
+test('horodatages FIO UTC, décalages et fraction de seconde déterministes', async () => {
+  const { quoteTime } = await import('../src/quoteTime.ts')
+  const instant = Date.UTC(2026, 10, 21, 19, 31, 22, 922)
+  for (const timestamp of ['2026-11-21T19:31:22.922765Z', '2026-11-21T20:31:22.922+01:00',
+    '2026-11-21T14:31:22.922-0500', '2026-11-21T19:31:22.922+00:00']) {
+    assert.equal(quoteTime(timestamp), instant)
+    assert.equal(freshness(timestamp, instant + FRESH_WINDOW_MS), 'fresh')
+    assert.equal(freshness(timestamp, instant + FRESH_WINDOW_MS + 1), 'stale')
+  }
+  for (const invalid of [undefined, null, instant, '2026-11-21', '2026-11-21T19:31:22',
+    '2026-02-29T00:00:00Z', '2026-11-21T24:00:00Z', '2026-11-21T19:31:22+10:60', '2026-11-21T19:31:22Z\n']) {
+    assert.equal(quoteTime(invalid), null)
+  }
+  assert.equal(freshness('2026-11-21T19:31:22.922Z', instant - 5 * 60_000 - 1), 'unknown')
+})

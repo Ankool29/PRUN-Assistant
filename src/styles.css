@@ -209,3 +209,9 @@ footer span { margin: 0 .25rem; }
 .flight-fields { margin: .65rem 0 1rem; }
 .flight-systems { display: block; overflow-wrap: anywhere; }
 .scanner-record .scanner-gain .error { color: var(--orange); }
+.scanner-stage-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: .45rem; margin-top: .6rem; }
+.scanner-stage-counts div { display: flex; gap: .6rem; align-items: baseline; justify-content: space-between; padding: .45rem .6rem; background: var(--panel-hover); border-radius: .4rem; }
+.scanner-stage-counts dt { color: var(--muted); font-size: .84rem; }
+.scanner-stage-counts dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.scanner-gap-intro { line-height: 1.45; margin: .55rem 0; }
+.scanner-gap-filter { margin-bottom: .6rem; max-width: 20rem; }
