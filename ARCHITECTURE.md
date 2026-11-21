@@ -23,3 +23,9 @@ flowchart LR
 Les jointures utilisent le ticker matériau, le code bourse et le ticker bâtiment. Une cotation est identifiée par le couple bourse-matériau, et une recette par `StandardRecipeName`. Chaque ordre public est représenté par son prix unitaire et sa quantité éventuellement nulle. Le contrat distingue `collectedAt` (fin de la collecte), `observedAt` (horodatage fourni par FIO pour la cotation) et `lastTradeAtMs` (dernière transaction).
 
 Le navigateur charge un fichier du même site. Le changement de page utilise les fragments d’URL et conserve un point d’entrée commun sur un sous-chemin de projet. Une panne de rechargement dans l’onglet conserve le dernier instantané validé en mémoire avec un message visible. Une panne de collecte dans Actions interrompt le déploiement et la dernière version Pages reste en ligne avec ses dates d’origine.
+
+## Scanner M1
+
+`collector/history.py` publie un instantané indépendant des bougies quotidiennes dans `public/data/history.json`. La CI choisit les carnets récents les plus profonds par bourse et enregistre les échecs de collecte par paire. Le scanner lit le jeu d’historique de Pages et permet une requête publique CXPC à la demande pour une paire filtrée sans historique embarqué.
+
+`src/scanner/` contient les simulations déterministes d’exécution, d’arbitrage et de spéculation. `src/pages/Scanner.tsx` gère les filtres, l’origine des données et les résultats. Les quantités, prix, coûts, limites et fenêtres de validité sont expliqués dans le [rapport M1](M1-CALCULS.md).

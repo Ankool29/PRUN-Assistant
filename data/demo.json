@@ -11,7 +11,8 @@
   ],
   "exchanges": [
     {"code":"AI1","name":"Bourse de démonstration Antares","station":"Antares","currency":"AIC","decimals":2},
-    {"code":"NC1","name":"Bourse de démonstration Moria","station":"Moria","currency":"NCC","decimals":2}
+    {"code":"NC1","name":"Bourse de démonstration Moria","station":"Moria","currency":"NCC","decimals":2},
+    {"code":"NC2","name":"Bourse de démonstration Hubur","station":"Hubur","currency":"NCC","decimals":2}
   ],
   "markets": [
     {"ticker":"AL","exchange":"AI1","currency":"AIC","observedAt":null,"lastTradeAtMs":null,"bid":1170,"ask":1200,"last":1180,"average":1185,"marketMakerBuy":null,"marketMakerSell":null,"supply":188,"demand":110,"buys":[{"price":1170,"quantity":50},{"price":1120,"quantity":60}],"sells":[{"price":1200,"quantity":80},{"price":1210,"quantity":108}]},
@@ -19,7 +20,8 @@
     {"ticker":"BSE","exchange":"AI1","currency":"AIC","observedAt":null,"lastTradeAtMs":null,"bid":690,"ask":720,"last":705,"average":710,"marketMakerBuy":400,"marketMakerSell":null,"supply":30,"demand":40,"buys":[{"price":690,"quantity":40},{"price":400,"quantity":null}],"sells":[{"price":720,"quantity":30}]},
     {"ticker":"FE","exchange":"AI1","currency":"AIC","observedAt":null,"lastTradeAtMs":null,"bid":640,"ask":678,"last":652,"average":657,"marketMakerBuy":null,"marketMakerSell":null,"supply":490,"demand":130,"buys":[{"price":640,"quantity":130}],"sells":[{"price":678,"quantity":490}]},
     {"ticker":"H2O","exchange":"AI1","currency":"AIC","observedAt":null,"lastTradeAtMs":null,"bid":null,"ask":33,"last":null,"average":null,"marketMakerBuy":null,"marketMakerSell":null,"supply":300,"demand":0,"buys":[],"sells":[{"price":33,"quantity":300}]},
-    {"ticker":"AL","exchange":"NC1","currency":"NCC","observedAt":null,"lastTradeAtMs":null,"bid":1110,"ask":1185,"last":1140,"average":1150,"marketMakerBuy":null,"marketMakerSell":null,"supply":30,"demand":27,"buys":[{"price":1110,"quantity":27}],"sells":[{"price":1185,"quantity":30}]}
+    {"ticker":"AL","exchange":"NC1","currency":"NCC","observedAt":null,"lastTradeAtMs":null,"bid":1110,"ask":1185,"last":1140,"average":1150,"marketMakerBuy":null,"marketMakerSell":null,"supply":30,"demand":27,"buys":[{"price":1110,"quantity":27}],"sells":[{"price":1185,"quantity":30}]},
+    {"ticker":"AL","exchange":"NC2","currency":"NCC","observedAt":null,"lastTradeAtMs":null,"bid":1350,"ask":1390,"last":1370,"average":1360,"marketMakerBuy":null,"marketMakerSell":null,"supply":50,"demand":34,"buys":[{"price":1350,"quantity":14},{"price":1300,"quantity":20}],"sells":[{"price":1390,"quantity":50}]}
   ],
   "buildings": [
     {"ticker":"SME","name":"Fonderie","expertise":"METALLURGY","area":20,"construction":[{"ticker":"BSE","quantity":10}],"workforce":{"pioneers":30,"settlers":0,"technicians":0,"engineers":0,"scientists":0}},
