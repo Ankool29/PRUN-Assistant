@@ -38,7 +38,7 @@ export function evaluateCircuit(input: CircuitInput) {
   const opening = mode === 'hold' ? { ...holdings, [reference]: capital } : { [reference]: capital }
   const wallet: Wallet = { ...opening }
   const payments: Wallet = {}
-  const unavailable = (reason: string) => ({ reason } as const)
+  const unavailable = (reason: string, blocked = false) => ({ reason, blocked } as const)
   if (!Number.isFinite(capital) || capital < 0 || Object.values(opening).some(value => !Number.isFinite(value) || value < 0)) {
     return unavailable('Capital ou solde initial invalide.')
   }
@@ -55,11 +55,11 @@ export function evaluateCircuit(input: CircuitInput) {
   for (const [currency, amount] of Object.entries(payments)) {
     const missing = amount - (wallet[currency] ?? 0)
     if (missing > EPSILON) {
-      if (mode === 'hold' || currency === reference) return unavailable(`Solde insuffisant en ${currency} pour ${amount.toFixed(2)} ${currency} de dépenses.`)
+      if (mode === 'hold' || currency === reference) return unavailable(`Solde insuffisant en ${currency} pour ${amount.toFixed(2)} ${currency} de dépenses.`, true)
       const lots = Math.ceil((missing - EPSILON) / FX_LOT)
       const conversion = desk.execute(currency, 'ask', lots)
       if (!conversion) return unavailable(`${desk.issue(currency, 'ask')} ${lots} lots requis.`)
-      if (wallet[reference] + EPSILON < conversion.cash) return unavailable(`Capital ${reference} insuffisant pour acheter ${lots} lots de ${currency}, frais inclus.`)
+      if (wallet[reference] + EPSILON < conversion.cash) return unavailable(`Capital ${reference} insuffisant pour acheter ${lots} lots de ${currency}, frais inclus.`, true)
       conversions.push(conversion)
       wallet[reference] -= conversion.cash
       wallet[currency] = (wallet[currency] ?? 0) + lots * FX_LOT

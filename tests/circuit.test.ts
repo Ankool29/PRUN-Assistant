@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { Market, Snapshot } from '../src/data.ts'
 import { evaluateCircuit, type CircuitInput } from '../src/scanner/circuit.ts'
 import { marketCircuitBuilder } from '../src/scanner/circuitMarket.ts'
+import { scanCircuits } from '../src/scanner/circuitScan.ts'
 import { createFxDesk, fxQuoteSchema, type FxQuote } from '../src/scanner/fxBook.ts'
 import { emptyNavigation, type ShipNavigation } from '../src/scanner/navigation.ts'
 import type { Costs } from '../src/scanner/execution.ts'
@@ -101,7 +102,7 @@ test('deux trajets SFC paient le ravitaillement et les frais dans leurs devises 
     return { ...raw.markets[0], exchange, ticker, currency, observedAt, lastTradeAtMs: now, last: null, average: null, ...orders }
   }
   const from = market('CI1', 'SF', 'CIS', { sells: [{ price: 10, quantity: 2 }, { price: 30, quantity: 5 }] })
-  const to = market('NC1', 'SF', 'NCC', { buys: [{ price: 500, quantity: 3 }], last: 450 })
+  const to = market('NC1', 'SF', 'NCC', { buys: [{ price: 500, quantity: 5 }], last: 450 })
   const fuel = market('AI1', 'SF', 'AIC', { sells: [{ price: 20, quantity: 3 }] })
   const ship: ShipNavigation = { ...emptyNavigation, stlEngine: 'STL', mass: 80, cargoT: 1000, cargoM3: 1000,
     sfTank: 50, quotes: [
@@ -120,9 +121,14 @@ test('deux trajets SFC paient le ravitaillement et les frais dans leurs devises 
   assert.deepEqual(circuit.legs.map(leg => leg.minutes), [20, 40])
   assert.deepEqual(circuit.deal.payments.map(row => [row.currency, row.amount]),
     [['CIS', 151.5], ['AIC', 60.6], ['ICA', 30], ['CIS', 20.2], ['NCC', 7]])
-  assert.equal(circuit.deal.proceeds.amount, 1485)
-  assert.deepEqual(circuit.deal.remaining, { quantity: 2, covered: 2, currency: 'NCC', value: 891 })
-  assert.match(build({ ...from, observedAt: null }, to).reasons[0], /Carnet FIO/)
+  assert.equal(circuit.deal.proceeds.amount, 2475)
+  const partial = build(from, { ...to, buys: [{ price: 500, quantity: 3 }] })
+  assert.equal(partial.impossible, true)
+  assert.deepEqual(partial.commercial.deal?.remaining, { quantity: 2, covered: 2, currency: 'NCC', value: 891 })
+  const undated = build({ ...from, observedAt: null }, to)
+  assert.equal(undated.commercial.quality, 'unknown')
+  assert.ok(undated.commercial.deal)
+  assert.deepEqual(undated.circuits, [])
 })
 
 test('rejeu des carnets FIO archivés FEO avec coût manuel déclaré et règlement sans change', () => {
@@ -139,4 +145,71 @@ test('rejeu des carnets FIO archivés FEO avec coût manuel déclaré et règlem
   assert.ok(!('reason' in result))
   assert.deepEqual(result.conversions, [])
   assert.equal(result.final, 5000 - circuit.deal.payments.reduce((sum, row) => sum + row.amount, 0) + circuit.deal.proceeds.amount)
+})
+
+test('la découverte reste visible sans SFC, avec des dates anciennes ou sans capital exploitable', () => {
+  const from = { ...raw.markets[0], ticker: 'AL', exchange: 'CI2', currency: 'CIS', observedAt, average: null, last: null,
+    sells: [{ price: 100, quantity: 2 }, { price: 90, quantity: 1 }], buys: [] }
+  const to = { ...from, exchange: 'CI1', sells: [], buys: [{ price: 200, quantity: 2 }, { price: 220, quantity: 1 }] }
+  const settings = {
+    data: { ...raw, collectedAt: observedAt, markets: [from, to] }, markets: [from, to],
+    origin: 'CI2', destination: 'CI1', parking: 'CI2', ship: emptyNavigation, navigation: null, now, quantity: 2,
+    costs: { ...base, currency: 'CIS', buyFee: 0, sellFee: 0 },
+    transport: { emptyFixed: null, loadedFixed: null, loadedUnit: null },
+    funding: { reference: 'CIS', capital: 500, holdings: {}, mode: 'close' as const, rates: {}, now },
+  }
+  const [unpriced] = scanCircuits(settings).rows
+  assert.equal(unpriced.category, 'review')
+  assert.deepEqual(unpriced.margin, { value: 230, currency: 'CIS', kind: 'native' })
+  assert.equal(unpriced.score, null)
+  assert.match(unpriced.reasons.join(' '), /SFC.*chargé/)
+  const transport = { ...settings.transport, loadedFixed: 190, loadedUnit: 0 }
+  const [known] = scanCircuits({ ...settings, transport }).rows
+  assert.equal(known.category, 'evaluated')
+  assert.equal(known.score, 40)
+  const [unfunded] = scanCircuits({ ...settings, transport, settlementReady: false }).rows
+  assert.equal(unfunded.category, 'review')
+  assert.equal(unfunded.margin?.value, 230)
+  const [blocked] = scanCircuits({ ...settings, transport, ship: { ...emptyNavigation, cargoT: 0 } }).rows
+  assert.equal(blocked.category, 'blocked')
+  assert.match(blocked.reasons[0], /Capacité/)
+  assert.equal(blocked.margin?.value, 230)
+
+  for (const [time, quality] of [['2026-11-21T18:00:00.123456+01:00', 'stale'], [null, 'unknown']] as const) {
+    const [old] = scanCircuits({ ...settings, markets: [from, { ...to, observedAt: time }], transport }).rows
+    assert.equal(old.category, 'review')
+    assert.equal(old.quality, quality)
+    assert.equal(old.margin?.value, 230)
+    assert.equal(old.score, null)
+    assert.equal(old.valuation, undefined)
+  }
+  const [oldSnapshot] = scanCircuits({ ...settings, transport, data: { ...settings.data, collectedAt: '2026-11-20T20:55:00Z' } }).rows
+  assert.equal(oldSnapshot.category, 'review')
+  assert.equal(oldSnapshot.quality, 'stale')
+  assert.equal(oldSnapshot.score, null)
+})
+
+test('les flux natifs restent disponibles sans change et la marge fermée inclut le taux BID et les frais', () => {
+  const from = { ...raw.markets[0], ticker: 'AL', exchange: 'AI1', currency: 'AIC', observedAt, average: null, last: null,
+    sells: [{ price: 4000, quantity: 1 }], buys: [] }
+  const to = { ...from, exchange: 'CI1', currency: 'CIS', sells: [], buys: [{ price: 3000, quantity: 1 }] }
+  const settings = {
+    data: { ...raw, collectedAt: observedAt, markets: [from, to] }, markets: [from, to],
+    origin: 'AI1', destination: 'CI1', parking: 'AI1', ship: emptyNavigation, navigation: null, now, quantity: 1,
+    costs: { ...base, buyFee: 0, sellFee: 0 }, transport: { emptyFixed: null, loadedFixed: null, loadedUnit: null },
+    funding: { reference: 'AIC', capital: 5000, holdings: {}, mode: 'close' as const, rates: {}, now },
+  }
+  const [unknown] = scanCircuits(settings).rows
+  assert.equal(unknown.category, 'review')
+  assert.equal(unknown.margin, null)
+  assert.equal(unknown.deal?.payments[0].amount, 4000)
+  assert.equal(unknown.deal?.proceeds.amount, 3000)
+  const [marked] = scanCircuits({ ...settings, funding: { ...settings.funding, rates } }).rows
+  assert.deepEqual(marked.margin, { value: 1390, currency: 'AIC', kind: 'closed' })
+  assert.equal(marked.score, null)
+  const [insufficient] = scanCircuits({ ...settings, markets: [from, { ...to, buys: [] }] }).rows
+  assert.equal(insufficient.category, 'blocked')
+  const [missingDepth] = scanCircuits({ ...settings, markets: [from, { ...to, buys: [{ price: 3000, quantity: null }] }] }).rows
+  assert.equal(missingDepth.category, 'review')
+  assert.match(missingDepth.reasons[0], /Volume ASK ou BID inconnu/)
 })

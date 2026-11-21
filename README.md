@@ -49,3 +49,5 @@ Voir le [rapport M1.2 sur la navigation](M1.2-NAVIGATION.md) pour les exclusions
 L’onglet **Circuits multidevises** compare la conservation des devises, la clôture en devise initiale et la conversion monétaire directe à partir de relevés FXOB. [Mode d’emploi et calculs M1.3](M1.3-CHANGE.md)
 
 Le [rapport du correctif du scanner](CORRECTIF-SCANNER.md) détaille la reproduction, la fraîcheur et les écarts consultables sans change.
+
+[Rejeu FIO et catégories du correctif M1.3.1](M1.3.1-CIRCUITS.md)

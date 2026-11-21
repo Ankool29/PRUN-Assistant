@@ -1,6 +1,6 @@
 import type { Market, Snapshot } from '../data.ts'
 import { FRESH_WINDOW_MS, freshness } from '../domain.ts'
-import { bookDepth, bookIsUsable, knownLevels, priceOutOfRange, type Costs, type Level } from './execution.ts'
+import { bookDepth, knownLevels, priceOutOfRange, type Costs, type Level } from './execution.ts'
 import type { TransportRates } from './itinerary.ts'
 import { createFlightPlanner, modes, type NavigationData, type ShipNavigation } from './navigation.ts'
 import { remaining } from './trade.ts'
@@ -8,6 +8,9 @@ import type { CircuitDeal, Payment } from './circuit.ts'
 
 type Leg = { label: string; minutes: number | null; payments: Payment[]; reserved: number }
 export type MarketCircuit = { deal: CircuitDeal; from: Market; to: Market; legs: Leg[] }
+export type CircuitQuality = ReturnType<typeof freshness> | 'demo'
+type CircuitBooks = { quality: CircuitQuality; deal: CircuitDeal | null }
+type CircuitReport = { commercial: CircuitBooks; circuits: MarketCircuit[]; reasons: string[]; impossible: boolean }
 type Settings = {
   data: Snapshot; now: number; parking: string; ship: ShipNavigation; navigation: NavigationData | null
   transport: TransportRates; costs: Costs; quantity: number
@@ -51,45 +54,77 @@ export function marketCircuitBuilder(settings: Settings) {
     }
     return { legs, reasons: legs.length ? [] : [
       ...reasons.map(reason => `${from} → ${to} · ${reason}`),
-      `${from} → ${to} · relevé SFC utilisable pour ${expected} unités ou tarif manuel manquant.`,
+      `${from} → ${to} · relevé SFC ${ticker ? `chargé (${expected} × ${ticker})` : 'à vide'} ou tarif manuel manquant.`,
     ] }
   }
 
-  return (from: Market, to: Market): { circuits: MarketCircuit[]; reasons: string[] } => {
-    const reject = (...reasons: string[]) => ({ circuits: [], reasons })
-    if (!parking) return reject('Marché de stationnement manquant.')
-    if (!demo && freshness(data.collectedAt, now) !== 'fresh') return reject('Instantané FIO ancien ou non daté.')
-    if ([from, to].some(market => !bookIsUsable(market, now, demo))) return reject('Carnet FIO ancien ou non daté.')
-    const material = data.materials.find(row => row.ticker === from.ticker)
-    if (material && ((ship.cargoT !== null && quantity * material.weight > ship.cargoT)
-      || (ship.cargoM3 !== null && quantity * material.volume > ship.cargoM3)))
-      return reject('Capacité de fret dépassée.')
-    const asks = priceLevels(from, false)
-    const bids = priceLevels(to, true)
-    if (bookDepth(asks) < Math.max(quantity, costs.minLiquidity) || bookDepth(bids) < costs.minLiquidity)
-      return reject('Profondeur du carnet ou quantité d’achat insuffisante.')
-    const empty = route(parking, from.exchange, '')
-    const loaded = route(from.exchange, to.exchange, from.ticker)
+  const collectionQuality = freshness(data.collectedAt, now)
+  const materials = new Map(data.materials.map(material => [material.ticker, material]))
+  const asksByMarket = new Map<Market, Level[]>()
+  const bidsByMarket = new Map<Market, Level[]>()
+
+  return (from: Market, to: Market): CircuitReport => {
+    const qualities = [collectionQuality, freshness(from.observedAt, now), freshness(to.observedAt, now)]
+    const quality: CircuitQuality = demo ? 'demo' : qualities.includes('unknown') ? 'unknown'
+      : qualities.includes('stale') ? 'stale' : 'fresh'
+    const asks = asksByMarket.get(from) ?? priceLevels(from, false)
+    const bids = bidsByMarket.get(to) ?? priceLevels(to, true)
+    asksByMarket.set(from, asks)
+    bidsByMarket.set(to, bids)
+    const offerDepth = bookDepth(asks)
+    const demandDepth = bookDepth(bids)
     const sale = fill(bids, quantity)
     const unsold = quantity - sale.quantity
     const recentTrade = demo || (to.lastTradeAtMs !== null && now - to.lastTradeAtMs <= FRESH_WINDOW_MS && to.lastTradeAtMs <= now)
     const lastPrice = recentTrade && to.last && (!to.average || !priceOutOfRange(to.last, to.average)) ? to.last : null
+
+    function dealFor(purchase: ReturnType<typeof fill>, legs: Leg[]): CircuitDeal {
+      return {
+        payments: [{ currency: from.currency, amount: purchase.value * (1 + costs.buyFee),
+          label: `Achat ASK · ${from.exchange}, frais inclus` }, ...legs.flatMap(leg => leg.payments)],
+        proceeds: { currency: to.currency, amount: sale.value * (1 - costs.sellFee), label: `Revente BID · ${to.exchange}, frais déduits` },
+        purchased: quantity, sold: sale.quantity,
+        remaining: { quantity: unsold, covered: lastPrice === null ? 0 : unsold, currency: to.currency,
+          value: (lastPrice ?? 0) * unsold * (1 - costs.sellFee) },
+      }
+    }
+
+    const deal = offerDepth >= quantity && sale.quantity > 0 ? dealFor(fill(asks, quantity), []) : null
+    let issue: string | null = null
+    let blocked = false
+    if (offerDepth < Math.max(quantity, costs.minLiquidity) || demandDepth < Math.max(quantity, costs.minLiquidity)) {
+      const offerUnknown = offerDepth < Math.max(quantity, costs.minLiquidity)
+        && from.sells.some(order => order.price > 0 && order.quantity === null)
+      const demandUnknown = demandDepth < Math.max(quantity, costs.minLiquidity)
+        && to.buys.some(order => order.price > 0 && order.quantity === null)
+      blocked = !offerUnknown && !demandUnknown
+      issue = blocked
+        ? `Volume ASK/BID utilisable dans les carnets observés · ${offerDepth} à l’achat / ${demandDepth} à la revente. Quantité demandée ${quantity}, seuil de profondeur ${costs.minLiquidity}.`
+        : 'Volume ASK ou BID inconnu sur au moins un niveau nécessaire. Exécution complète non démontrée.'
+    }
+    const commercial: CircuitBooks = { quality, deal }
+    const reject = (reasons: string[], impossible = false): CircuitReport => ({ commercial, circuits: [], reasons, impossible })
+    const material = materials.get(from.ticker)
+    if (material && ((ship.cargoT !== null && quantity * material.weight > ship.cargoT)
+      || (ship.cargoM3 !== null && quantity * material.volume > ship.cargoM3)))
+      return reject(['Capacité de fret dépassée pour la quantité demandée.'], true)
+    if (issue) return reject([issue], blocked)
+    if (!parking) return reject(['Marché de stationnement manquant.'])
+    const empty = route(parking, from.exchange, '')
+    const loaded = route(from.exchange, to.exchange, from.ticker)
+    if (!demo && quality !== 'fresh') return reject([...empty.reasons, ...loaded.reasons])
     const circuits = empty.legs.flatMap(first => loaded.legs.flatMap(second => {
       const purchase = fill(remaining(asks, second.reserved), quantity)
       const legs = [first, second].filter(leg => leg.label)
-      return purchase.quantity !== quantity ? [] : [{
-        from, to, legs, deal: {
-          payments: [{ currency: from.currency, amount: purchase.value * (1 + costs.buyFee),
-            label: `Achat · ${from.exchange}, frais inclus` }, ...legs.flatMap(leg => leg.payments)],
-          proceeds: { currency: to.currency, amount: sale.value * (1 - costs.sellFee), label: `Revente · ${to.exchange}, frais déduits` },
-          purchased: quantity, sold: sale.quantity,
-          remaining: { quantity: unsold, covered: lastPrice === null ? 0 : unsold, currency: to.currency,
-            value: (lastPrice ?? 0) * unsold * (1 - costs.sellFee) },
-        },
-      }]
+      return purchase.quantity !== quantity ? [] : [{ from, to, legs, deal: dealFor(purchase, legs) }]
     }))
-    if (circuits.length) return { circuits, reasons: [] }
+    if (circuits.length) {
+      const unknownCapacity = ship.cargoT === null || ship.cargoM3 === null
+      return { commercial, circuits, impossible: false, reasons: unknownCapacity
+        ? ['Capacité de fret partiellement ou non renseignée · vérifier le chargement avec le tarif manuel.'] : [] }
+    }
     const reasons = [...empty.reasons, ...loaded.reasons]
-    return reject(...(reasons.length ? reasons : ['Offres d’achat insuffisantes après réservation du carburant.']))
+    return reasons.length ? reject(reasons)
+      : reject(['Offres d’achat insuffisantes après réservation du carburant pour les trajets chiffrés.'], false)
   }
 }

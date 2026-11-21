@@ -283,7 +283,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
     {!parking && <Empty>Choisissez le marché de stationnement du vaisseau pour calculer les opportunités.</Empty>}
     {!!report?.reviews.length &&
       <p className="scanner-notice">Coût de transport inconnu ou non vérifié pour certaines pistes. Consultez « À vérifier » et renseignez un relevé SFC ou les tarifs de secours.</p>}
-    {!snapshotUsable && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
+    {!snapshotUsable && panel !== 'circuit' && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
     {invalid && <Empty>Vérifiez les paramètres de simulation. Le capital doit être positif, et les quantités entières et cohérentes.</Empty>}
     {panel === 'circuit' ? <CircuitPanel data={data} markets={matching} currencies={currencies} now={now}
       parking={parking} origin={origin} destination={to} costs={costs} invalid={invalid} ship={ships.current.navigation}
