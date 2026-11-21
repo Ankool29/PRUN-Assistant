@@ -2,13 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Market, Snapshot } from '../data.ts'
 import { displayName, formatTime, freshness, searchKey } from '../domain.ts'
 import { Empty, PAGE_SIZE, Search, SectionHead, ShowMore } from '../ui.tsx'
-import { scanArbitrage, type SaleMode } from '../scanner/arbitrage.ts'
+import { analyzeArbitrage, type SaleMode } from '../scanner/arbitrage.ts'
 import { scanSpeculation } from '../scanner/speculation.ts'
 import { demoHistory, loadHistory, loadPairHistory, pairKey, type History, type HistorySeries } from '../scanner/history.ts'
 import { validCosts, type Costs } from '../scanner/execution.ts'
 import { ArbitrageDetails, SpeculationDetails } from '../scanner/details.tsx'
 import { groupByDeparture, type TransportRates } from '../scanner/itinerary.ts'
 import { unknownTariffs, useShipProfiles, type TariffForm } from '../scanner/ships.ts'
+
+import { Assessment } from '../scanner/Assessment.tsx'
+import { FlightSettings } from '../scanner/FlightSettings.tsx'
+import { createFlightPlanner, loadNavigation, type NavigationData } from '../scanner/navigation.ts'
 
 type Sort = 'net' | 'yield' | 'risk'
 type Panel = 'arbitrage' | 'speculation'
@@ -79,7 +83,14 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
     loadedFixed: knownTariff(tariffForm.loadedFixed),
     loadedUnit: knownTariff(tariffForm.loadedUnit),
   }
-  const departure = { parking, transport }
+  const [navigation, setNavigation] = useState<NavigationData | null>(null)
+  useEffect(() => {
+    if (demo) return
+    const controller = new AbortController()
+    loadNavigation(AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)]))
+      .then(value => { if (!controller.signal.aborted) setNavigation(value) }).catch(() => {})
+    return () => controller.abort()
+  }, [demo])
   const [panel, setPanel] = useState<Panel>('arbitrage')
   const [mode, setMode] = useState<SaleMode>('immediate')
   const [from, setFrom] = useState('')
@@ -97,6 +108,9 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
     capital: parse(form.capital), buyFee: parse(form.buyFee) / 100, sellFee: parse(form.sellFee) / 100,
     minQuantity: parse(form.minQuantity), maxQuantity: parse(form.maxQuantity),
     minReturn: parse(form.minReturn) / 100, minLiquidity: parse(form.minLiquidity),
+  }
+  const departure = {
+    parking, transport, planner: createFlightPlanner(data, navigation, ships.current.navigation, costs, now),
   }
   const term = searchKey(query)
   const marketNames = useMemo(() => new Map(data.materials.map(row => [row.ticker, searchKey(displayName(row.name))])), [data.materials])
@@ -117,10 +131,12 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const ratesInvalid = Object.entries(rates).some(([code, value]) => code !== currency && value.trim() && !(Number.isFinite(parse(value)) && parse(value) > 0))
   const invalid = !validCosts(costs) || hypothesisInvalid || ratesInvalid
 
-  const arbitrage = parking && snapshotUsable && !invalid && panel === 'arbitrage'
-    ? scanArbitrage(matching, costs, { now, demo, departure, mode, from: origin, to, target }) : []
+  const arbitrageReport = parking && snapshotUsable && !invalid && panel === 'arbitrage'
+    ? analyzeArbitrage(matching, costs, { now, demo, departure, mode, from: origin, to, target }) : null
+  const arbitrage = arbitrageReport?.opportunities ?? []
   const speculative = parking && snapshotUsable && !invalid && panel === 'speculation'
     ? scanSpeculation(matching, histories, costs, { now, demo, departure, from: origin, to }) : null
+  const report = arbitrageReport ?? speculative
   arbitrage.sort((a, b) => sort === 'risk' ? a.risk - b.risk || b.money.net - a.money.net : b.money[sort] - a.money[sort])
   speculative?.opportunities.sort((a, b) => {
     // Dans le groupe de départ, la revente sur place reste accessible après les trajets interbourses.
@@ -132,11 +148,11 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
   const rows = panel === 'arbitrage'
     ? arbitrage.map(item => ({
       origin: item.from.exchange, key: `${item.mode}.${item.from.ticker}.${item.from.exchange}.${item.to.exchange}`,
-      content: <ArbitrageDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>,
+      content: <ArbitrageDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo} navigation={navigation}/>,
     }))
     : (speculative?.opportunities ?? []).map(item => ({
       origin: item.from.exchange, key: `${pairKey(item.to.ticker, item.to.exchange)}.${item.from.exchange}`,
-      content: <SpeculationDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>,
+      content: <SpeculationDetails item={item} currency={currency} rates={costs.rates} now={now} demo={demo} navigation={navigation}/>,
     }))
   const { local, reposition } = groupByDeparture(rows, parking, row => row.origin)
   const shown = Math.min(local.length, limit) + Math.min(reposition.length, limit)
@@ -192,6 +208,8 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
           }}/>
         </label>
       </details>
+      <FlightSettings key={ships.current.id} data={data} profile={ships.current.navigation} save={value =>
+        ships.update(item => ({ ...item, navigation: value }))} parking={parking} currency={currency} navigation={navigation}/>
       <div className="switch scanner-scope" role="group" aria-label="Périmètre du scanner">
         <button aria-pressed={scope === 'local'} onClick={() => { setScope('local'); setLimit(PAGE_SIZE) }}>Départ de mon marché</button>
         <button aria-pressed={scope === 'all'} onClick={() => { setScope('all'); setLimit(PAGE_SIZE) }}>Toutes les bourses</button>
@@ -240,8 +258,8 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
       ? 'La vente immédiate suppose que les ordres observés restent disponibles jusqu’à l’arrivée des marchandises.'
       : 'Scénario conditionnel. Sans prix saisi, le scanner utilise la meilleure offre de vente observée à destination.'}</p>}
     {!parking && <Empty>Choisissez le marché de stationnement du vaisseau pour calculer les opportunités.</Empty>}
-    {parking && (transport.loadedFixed === null || transport.loadedUnit === null || (scope === 'all' && transport.emptyFixed === null)) &&
-      <p className="scanner-notice">Coût de transport inconnu. Les trajets concernés sont exclus. Renseignez les montants nécessaires dans les paramètres de transport.</p>}
+    {!!report?.reviews.length &&
+      <p className="scanner-notice">Coût de transport inconnu ou non vérifié pour certaines pistes. Consultez « À vérifier » et renseignez un relevé SFC ou les tarifs de secours.</p>}
     {!snapshotUsable && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
     {invalid && <Empty>Vérifiez les paramètres de simulation. Le capital et les taux saisis doivent être positifs, et les quantités entières et cohérentes.</Empty>}
     {panel === 'speculation' && <section className="history-status" aria-label="État des historiques">
@@ -263,7 +281,7 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
       </details>}
     </section>}
     <div className="section-title scanner-results">
-      <h2>{panel === 'speculation' ? 'Scénarios détectés' : 'Trajets détectés'}</h2>
+      <h2>{panel === 'speculation' ? 'Scénarios rentables estimés' : 'Trajets rentables estimés'}</h2>
       <label className="field"><span>Classement</span><select value={sort} onChange={event => {setSort(event.target.value as Sort); setLimit(PAGE_SIZE)}}>
         <option value="net">Bénéfice net décroissant</option><option value="yield">Rendement décroissant</option><option value="risk">Risque croissant</option>
       </select></label>
@@ -281,5 +299,8 @@ export function Scanner({ data, now }: { data: Snapshot; now: number }) {
       </section>}
       <ShowMore shown={shown} total={rows.length} more={() => setLimit(limit + PAGE_SIZE)}/>
     </>}
+    <Assessment diagnostics={report?.diagnostics ?? {}} reviews={report?.reviews ?? []} deficits={report?.deficits ?? []}
+      parking={parking} currency={currency} navigation={navigation} snapshotUsable={snapshotUsable} invalid={invalid}
+      speculation={panel === 'speculation'}/>
   </>
 }

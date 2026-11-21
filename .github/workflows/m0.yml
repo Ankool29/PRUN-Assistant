@@ -66,6 +66,7 @@ jobs:
         run: |
           if python -m collector.collect; then
             python -m collector.history
+            python -m collector.navigation || echo "::warning::Carte FIO de la branche conservée."
             npm run build
           else
             echo "::warning::FIO indisponible. L’artefact conserve les instantanés de la branche et leurs dates."
@@ -98,6 +99,7 @@ jobs:
       - run: npm ci
       - run: python -m collector.collect
       - run: python -m collector.history
+      - run: python -m collector.navigation || echo "::warning::Carte FIO de la branche conservée."
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

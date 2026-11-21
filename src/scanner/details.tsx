@@ -3,6 +3,9 @@ import { formatPrice, formatTime, numeric } from '../domain.ts'
 import { Status } from '../ui.tsx'
 import type { Arbitrage } from './arbitrage.ts'
 import type { Financials } from './execution.ts'
+import { MapPaths } from './FlightSettings.tsx'
+import { modes, type NavigationData } from './navigation.ts'
+import type { Calculated } from './trade.ts'
 import type { Itinerary } from './itinerary.ts'
 import type { Speculation } from './speculation.ts'
 
@@ -19,12 +22,39 @@ function Finances({ money, currency }: { money: Financials; currency: string }) 
   return <dl className="facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{formatPrice(value)} {currency}</dd></div>)}</dl>
 }
 
-function Travel({ route, quantity, currency }: { route: Itinerary; quantity: number; currency: string }) {
+export function Travel({ route, quantity, currency, navigation }: {
+  route: Itinerary; quantity: number; currency: string; navigation?: NavigationData | null
+}) {
+  const allTimed = route.legs.length > 0 && route.legs.every(leg => leg.flight)
+  const minutes = route.legs.reduce((sum, leg) => sum + (leg.flight?.minutes ?? 0), 0)
   return <><h3>Itinéraire</h3>
+    {allTimed && <p>Durée cumulée SFC · {numeric(minutes)} min</p>}
     {route.legs.length ? <ol className="scanner-legs">{route.legs.map(leg => <li key={leg.kind}>
       {leg.from} vers {leg.to} · {leg.kind === 'empty' ? 'À vide' : 'Chargé'} · {formatPrice(leg.fixed + leg.unit * quantity)} {currency}
+      {leg.flight ? <ul>
+        <li>{modes[leg.flight.mode]} · {numeric(leg.flight.minutes)} min d’après SFC</li>
+        <li>{leg.flight.distanceKm === null ? 'Distance STL non relevée' : `${numeric(leg.flight.distanceKm)} km STL`}
+          {' · '}{leg.flight.distancePc === null ? 'Distance FTL non relevée' : `${numeric(leg.flight.distancePc)} pc FTL`}</li>
+        <li>{numeric(leg.flight.mass)} t (vaisseau et fret) · {numeric(leg.flight.cargoM3)} m³ de fret</li>
+        {leg.flight.fuel.map(fuel => <li key={fuel.ticker}>{fuel.units} {fuel.ticker} · {formatPrice(fuel.cost)} {currency} frais d’achat inclus</li>)}
+        <li>Autres frais et péages · {formatPrice(leg.flight.extra)} {currency}</li>
+      </ul> : <p>Tarif saisi · durée et consommation inconnues.</p>}
+      {navigation && <MapPaths navigation={navigation} from={leg.from} to={leg.to}/>}
     </li>)}</ol> : <p>Achat et revente sur place.</p>}
   </>
+}
+
+export function Alternatives({ items, currency, navigation }: {
+  items: Calculated[]; currency: string; navigation?: NavigationData | null
+}) {
+  if (!items.length) return null
+  return <details className="scanner-options">
+    <summary>Autres options de trajet · {items.length}</summary>
+    {items.map((item, index) => <section key={index}>
+      <p>{numeric(item.quantity)} unités · Net estimé {formatPrice(item.money.net)} {currency}</p>
+      <Travel route={item.route} quantity={item.quantity} currency={currency} navigation={navigation}/>
+    </section>)}
+  </details>
 }
 
 function observationAge(timestamp: string | null, now: number) {
@@ -47,8 +77,8 @@ function Summary({ ticker, title, money, risk, currency }: {
   </summary>
 }
 
-export function ArbitrageDetails({ item, currency, rates, now, demo }: {
-  item: Arbitrage; currency: string; rates: Readonly<Record<string, number>>; now: number; demo: boolean
+export function ArbitrageDetails({ item, currency, rates, now, demo, navigation }: {
+  item: Arbitrage; currency: string; rates: Readonly<Record<string, number>>; now: number; demo: boolean; navigation?: NavigationData | null
 }) {
   return <details className="record scanner-record">
     <Summary ticker={item.from.ticker} title={`${item.from.exchange} vers ${item.to.exchange}`} money={item.money} risk={item.risk} currency={currency}/>
@@ -59,7 +89,8 @@ export function ArbitrageDetails({ item, currency, rates, now, demo }: {
       <p className="muted">{numeric(item.quantity)} unités simulées · Profondeur bilatérale {numeric(item.liquidity)} unités</p>
       {[...new Set([item.from.currency, item.to.currency])].filter(code => code !== currency).map(code =>
         <p className="muted" key={code}>1 {code} ≈ {numeric(rates[code])} {currency} (taux saisi)</p>)}
-      <Travel route={item.route} quantity={item.quantity} currency={currency}/>
+      <Travel route={item.route} quantity={item.quantity} currency={currency} navigation={navigation}/>
+      <Alternatives items={item.alternatives} currency={currency} navigation={navigation}/>
       <Finances currency={currency} money={item.money}/>
       <p className="muted">Le risque augmente avec l’âge des carnets, la proportion de la profondeur utilisée, le change et l’incertitude d’une vente limite.</p>
       <h3>Niveaux simulés <small>· {currency} par unité</small></h3>
@@ -72,8 +103,8 @@ export function ArbitrageDetails({ item, currency, rates, now, demo }: {
 }
 
 const scenarioLabels = ['Pessimiste', 'Neutre', 'Optimiste']
-export function SpeculationDetails({ item, currency, rates, now, demo }: {
-  item: Speculation; currency: string; rates: Readonly<Record<string, number>>; now: number; demo: boolean
+export function SpeculationDetails({ item, currency, rates, now, demo, navigation }: {
+  item: Speculation; currency: string; rates: Readonly<Record<string, number>>; now: number; demo: boolean; navigation?: NavigationData | null
 }) {
   const { stats, to: market, from, scenarios } = item
   const resale = from.exchange === market.exchange ? `${market.exchange} · revente sur place` : `${from.exchange} vers ${market.exchange}`
@@ -104,7 +135,8 @@ export function SpeculationDetails({ item, currency, rates, now, demo }: {
       <h3>Calcul du scénario neutre</h3>
       {[...new Set([from.currency, market.currency])].filter(code => code !== currency).map(code =>
         <p className="muted" key={code}>1 {code} ≈ {numeric(rates[code])} {currency} (taux saisi)</p>)}
-      <Travel route={item.route} quantity={item.quantity} currency={currency}/>
+      <Travel route={item.route} quantity={item.quantity} currency={currency} navigation={navigation}/>
+      <Alternatives items={item.alternatives} currency={currency} navigation={navigation}/>
       <Finances currency={currency} money={scenarios[1].money}/>
       <p className="muted">Le risque tient compte de l’âge de la cotation, de la volatilité, de la couverture historique, du volume engagé et de la perte pessimiste.</p>
       <h3>Achat simulé <small>· {numeric(item.quantity)} unités</small></h3>

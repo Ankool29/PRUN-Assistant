@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { z } from 'zod'
 import type { Snapshot } from '../data.ts'
+import { emptyNavigation, shipNavigationSchema } from './navigation.ts'
 
 const tariffForm = z.object({
   emptyFixed: z.string(),
@@ -15,6 +16,7 @@ const ship = z.object({
   name: z.string().max(40),
   parking: z.string(),
   byCurrency: z.record(tariffForm),
+  navigation: shipNavigationSchema.default(emptyNavigation),
 })
 const fleetSchema = z.object({ selected: z.number(), ships: z.array(ship).min(1) }).refine(fleet =>
   new Set(fleet.ships.map(item => item.id)).size === fleet.ships.length
@@ -31,7 +33,7 @@ function loadFleet(key: string, demo: boolean): z.infer<typeof fleetSchema> {
   }
   return { selected: 1, ships: [{
     id: 1, name: demo ? 'Vaisseau de démonstration' : 'Vaisseau 1',
-    parking: demo ? 'NC1' : '',
+    parking: demo ? 'NC1' : '', navigation: emptyNavigation,
     byCurrency: demo ? { NCC: { emptyFixed: '40', loadedFixed: '20', loadedUnit: '1' } } : {},
   }] }
 }
@@ -56,7 +58,7 @@ export function useShipProfiles(source: Snapshot['source']) {
     })),
     add: () => setFleet(previous => {
       const id = Math.max(...previous.ships.map(item => item.id)) + 1
-      return { selected: id, ships: [...previous.ships, { id, name: `Vaisseau ${id}`, parking: '', byCurrency: {} }] }
+      return { selected: id, ships: [...previous.ships, { id, name: `Vaisseau ${id}`, parking: '', byCurrency: {}, navigation: emptyNavigation }] }
     }),
   }
 }

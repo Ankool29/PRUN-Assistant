@@ -81,3 +81,5 @@ PRUN_TEST_URL=https://ankool29.github.io/PRUN-Assistant/preview/m1/ npm run test
 ```
 
 Playwright émule un Pixel 7 dans les deux orientations. Le test du lien direct vérifie les ressources JS et CSS, les deux URL JSON, leur provenance FIO et le statut de fraîcheur affiché.
+
+Le [rapport M1.2](M1.2-NAVIGATION.md) documente le diagnostic des exclusions, la navigation publique et la comparaison avec le SFC.

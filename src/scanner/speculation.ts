@@ -1,8 +1,9 @@
 import type { Market } from '../data.ts'
-import { ageHours, bookIsUsable, fillsFor, knownLevels, type Costs, type Financials, type Level, priceOutOfRange, rate, totals, validCosts } from './execution.ts'
+import { ageHours, bookIsUsable, knownLevels, type Costs, type Financials, type Level, priceOutOfRange, rate, totals, validCosts } from './execution.ts'
 import { DAY_MS, HISTORY_WINDOW, pairKey, type DailyPoint, type HistorySeries } from './history.ts'
 
-import { itinerary, type Departure, type Itinerary } from './itinerary.ts'
+import { type Departure, type Itinerary } from './itinerary.ts'
+import { assessTrade, count, type Calculated, type Deficit, type Diagnostics, type Review } from './trade.ts'
 
 const MIN_PRICED_DAYS = 14
 const MIN_CONSECUTIVE_RETURNS = 7
@@ -63,6 +64,7 @@ export type Speculation = {
   from: Market
   to: Market
   route: Itinerary
+  alternatives: Calculated[]
   quantity: number
   discount: number
   liquidity: number
@@ -76,16 +78,20 @@ export function scanSpeculation(markets: Market[], history: HistorySeries[], cos
   now: number; demo: boolean; departure: Departure; from: string; to: string
 }) {
   const opportunities: Speculation[] = []
+  const reviews: Review[] = []
+  const deficits: Deficit[] = []
+  const diagnostics: Diagnostics = {}
   const insufficient: { market: Market; reason: string }[] = []
-  if (!validCosts(costs)) return { opportunities, insufficient, usable: 0, stale: 0, uncovered: markets.length }
+  if (!validCosts(costs)) return { opportunities, reviews, deficits, diagnostics, insufficient, usable: 0, stale: 0, uncovered: markets.length }
   const byPair = new Map(history.map(row => [pairKey(row.ticker, row.exchange), row.points]))
   const purchases = new Map<string, { market: Market; asks: Level[] }[]>()
   for (const market of markets) {
-    if (options.from && market.exchange !== options.from) continue
+    if (options.from && market.exchange !== options.from) { count(diagnostics, 'Périmètre ou bourse filtrée'); continue }
     const factor = rate(costs, market.currency)
-    if (factor === null || !bookIsUsable(market, options.now, options.demo)) continue
+    if (!bookIsUsable(market, options.now, options.demo)) { count(diagnostics, 'Carnet trop ancien ou sans date'); continue }
+    if (factor === null) { count(diagnostics, 'Taux de change absent'); continue }
     const asks = knownLevels(market.sells, factor)
-    if (!asks.length) continue
+    if (!asks.length) { count(diagnostics, 'Carnet sans prix ou quantité exploitable'); continue }
     const entry = { market, asks }
     const existing = purchases.get(market.ticker)
     if (existing) existing.push(entry)
@@ -96,28 +102,30 @@ export function scanSpeculation(markets: Market[], history: HistorySeries[], cos
   let stale = 0
   let uncovered = 0
   for (const market of markets) {
-    if (options.to && market.exchange !== options.to) continue
+    if (options.to && market.exchange !== options.to) { count(diagnostics, 'Bourse de revente filtrée'); continue }
     const points = byPair.get(pairKey(market.ticker, market.exchange))
-    if (!points) { uncovered++; continue }
+    if (!points) { uncovered++; count(diagnostics, 'Historique absent'); continue }
     const result = analyzeHistory(points, options.now)
-    if (result.reason) { insufficient.push({ market, reason: result.reason }); continue }
+    if (result.reason) { insufficient.push({ market, reason: result.reason }); count(diagnostics, 'Historique insuffisant'); continue }
     const stats = result.stats!
     const factor = rate(costs, market.currency)
-    if (factor === null) continue
-    if (!bookIsUsable(market, options.now, options.demo)) { stale++; continue }
+    if (factor === null) { count(diagnostics, 'Taux de change absent'); continue }
+    if (!bookIsUsable(market, options.now, options.demo)) { stale++; count(diagnostics, 'Carnet trop ancien ou sans date'); continue }
     usable++
-    if (stats.medianUnits < costs.minLiquidity || stats.medianUnits < costs.minQuantity) continue
+    if (stats.medianUnits < costs.minLiquidity || stats.medianUnits < costs.minQuantity) { count(diagnostics, 'Liquidité sous le seuil'); continue }
     const reference = stats.median * factor
     if (!Number.isFinite(reference) || reference <= 0 || stats.threshold >= 1) continue
     const ceiling = reference * (1 - stats.threshold)
     const resale = [{ price: reference, quantity: Math.floor(stats.medianUnits) }]
     for (const { market: from, asks } of purchases.get(market.ticker) ?? []) {
       // Un prix anormal au meilleur niveau rend l’entrée douteuse.
-      if (priceOutOfRange(asks[0].price, reference)) continue
-      const route = itinerary(options.departure, from.exchange, market.exchange)
-      if (!route) continue
-      const entry = fillsFor(asks.filter(row => row.price <= ceiling), resale, costs, route)
+      if (priceOutOfRange(asks[0].price, reference)) { count(diagnostics, 'Prix aberrant'); continue }
+      const assessment = assessTrade(from, market, asks.filter(row => row.price <= ceiling), resale, costs, options.departure, diagnostics)
+      if (assessment.review) reviews.push(assessment.review)
+      if (assessment.deficit) deficits.push(assessment.deficit)
+      const entry = assessment.confirmed
       if (!entry) continue
+      const route = entry.route
       const scenarios = stats.prices.map(value => ({
         price: value * factor,
         money: totals(entry.money.buy, value * factor * entry.quantity, entry.quantity, costs, route),
@@ -131,8 +139,8 @@ export function scanSpeculation(markets: Market[], history: HistorySeries[], cos
         + 15 * (1 - stats.pricedDays / HISTORY_WINDOW) + 20 * loss))
       opportunities.push({ from, to: market, route, quantity: entry.quantity,
         levels: entry.fills.map(fill => ({ price: fill.buy, quantity: fill.quantity })), discount,
-        stats, risk, liquidity: stats.medianUnits, scenarios })
+        stats, risk, liquidity: stats.medianUnits, scenarios, alternatives: assessment.alternatives ?? [] })
     }
   }
-  return { opportunities, insufficient, usable, stale, uncovered }
+  return { opportunities, reviews, deficits, diagnostics, insufficient, usable, stale, uncovered }
 }
