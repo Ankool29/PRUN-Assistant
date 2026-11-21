@@ -1,0 +1,204 @@
+import { useEffect, useMemo, useState } from 'react'
+import type { Market, Snapshot } from '../data.ts'
+import { displayName, formatTime, freshness, searchKey } from '../domain.ts'
+import { Empty, PAGE_SIZE, Search, SectionHead, ShowMore } from '../ui.tsx'
+import { scanArbitrage, type SaleMode } from '../scanner/arbitrage.ts'
+import { scanSpeculation } from '../scanner/speculation.ts'
+import { demoHistory, loadHistory, loadPairHistory, pairKey, type History, type HistorySeries } from '../scanner/history.ts'
+import { validCosts, type Costs } from '../scanner/execution.ts'
+import { ArbitrageDetails, SpeculationDetails } from '../scanner/details.tsx'
+
+type Sort = 'net' | 'yield' | 'risk'
+type Panel = 'arbitrage' | 'speculation'
+const defaults = {
+  capital: '100000', buyFee: '1', sellFee: '1', fixedTransport: '0', unitTransport: '0',
+  minQuantity: '1', maxQuantity: '1000', minReturn: '0', minLiquidity: '1', target: '',
+}
+
+function NumericField({ label, value, onChange, step = 'any', min = 0, max, placeholder }: {
+  label: string; value: string; onChange: (value: string) => void
+  step?: string; min?: number; max?: number; placeholder?: string
+}) {
+  return <label className="field"><span>{label}</span>
+    <input type="number" inputMode={step === '1' ? 'numeric' : 'decimal'} step={step} min={min} max={max}
+      placeholder={placeholder} value={value} onChange={event => onChange(event.target.value)}/>
+  </label>
+}
+
+function ExchangeField({ label, data, value, set }: {
+  label: string; data: Snapshot; value: string; set: (value: string) => void
+}) {
+  return <label className="field"><span>{label}</span>
+    <select value={value} onChange={event => set(event.target.value)}>
+      <option value="">Toutes</option>
+      {data.exchanges.map(item => <option key={item.code} value={item.code}>{item.code} · {item.station}</option>)}
+    </select>
+  </label>
+}
+
+function useHistoryStore(enabled: boolean) {
+  const [history, setHistory] = useState<History | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    if (!enabled || history || failed) return
+    const controller = new AbortController()
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(12_000)])
+    loadHistory(signal).then(value => { if (!controller.signal.aborted) setHistory(value) })
+      .catch(() => { if (!controller.signal.aborted) setFailed(true) })
+    return () => controller.abort()
+  }, [enabled, history, failed])
+
+  return { history, failed, retry: () => setFailed(false) }
+}
+
+const parse = (value: string) => value.trim() ? Number(value) : NaN
+
+export function Scanner({ data, now }: { data: Snapshot; now: number }) {
+  const demo = data.source === 'demo'
+  const currencies = [...new Set(data.exchanges.map(row => row.currency))].sort()
+  const [currency, setCurrency] = useState(() => currencies.find(code => data.exchanges.filter(row => row.currency === code).length > 1) ?? currencies[0])
+  const [rates, setRates] = useState<Record<string, string>>({})
+  const [panel, setPanel] = useState<Panel>('arbitrage')
+  const [mode, setMode] = useState<SaleMode>('immediate')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [query, setQuery] = useState('')
+  const [sort, setSort] = useState<Sort>('net')
+  const [form, setForm] = useState(defaults)
+  const [limit, setLimit] = useState(PAGE_SIZE)
+  const [manual, setManual] = useState<Record<string, HistorySeries>>({})
+  const [request, setRequest] = useState<{ pair: string; phase: 'loading' | 'failed' } | null>(null)
+  const { history, failed, retry } = useHistoryStore(!demo && panel === 'speculation')
+
+  const costs: Costs = {
+    currency, rates: Object.fromEntries(Object.entries(rates).map(([code, value]) => [code, parse(value)])),
+    capital: parse(form.capital), buyFee: parse(form.buyFee) / 100, sellFee: parse(form.sellFee) / 100,
+    fixedTransport: parse(form.fixedTransport), unitTransport: parse(form.unitTransport),
+    minQuantity: parse(form.minQuantity), maxQuantity: parse(form.maxQuantity),
+    minReturn: parse(form.minReturn) / 100, minLiquidity: parse(form.minLiquidity),
+  }
+  const term = searchKey(query)
+  const marketNames = useMemo(() => new Map(data.materials.map(row => [row.ticker, searchKey(displayName(row.name))])), [data.materials])
+  const matching = data.markets.filter(row => !term || searchKey(`${row.ticker} ${marketNames.get(row.ticker) ?? ''}`).includes(term))
+  const filtered = matching.filter(row => !from || row.exchange === from)
+  const exact = filtered.length === 1 ? filtered[0] : filtered.find(row => from && searchKey(row.ticker) === term)
+  const exactKey = exact && pairKey(exact.ticker, exact.exchange)
+  const bundledPairs = useMemo(
+    () => demo ? demoHistory(data, now) : history?.series ?? [],
+    [data, demo, history, now],
+  )
+  const histories = [...bundledPairs.filter(row => !manual[pairKey(row.ticker, row.exchange)]), ...Object.values(manual)]
+  const bundledMissing = !!exactKey && !histories.some(row => pairKey(row.ticker, row.exchange) === exactKey)
+  const snapshotUsable = demo || freshness(data.collectedAt, now) === 'fresh'
+  const target = mode === 'limit' && form.target.trim() ? parse(form.target) : null
+  const hypothesisInvalid = panel === 'arbitrage' && target !== null && !(Number.isFinite(target) && target > 0)
+  const ratesInvalid = Object.entries(rates).some(([code, value]) => code !== currency && value.trim() && !(Number.isFinite(parse(value)) && parse(value) > 0))
+  const invalid = !validCosts(costs) || hypothesisInvalid || ratesInvalid
+
+  const arbitrage = snapshotUsable && !invalid && panel === 'arbitrage'
+    ? scanArbitrage(matching, costs, { now, demo, mode, from, to, target }) : []
+  const speculative = snapshotUsable && !invalid && panel === 'speculation'
+    ? scanSpeculation(filtered, histories, costs, { now, demo }) : null
+  const total = panel === 'arbitrage' ? arbitrage.length : speculative?.opportunities.length ?? 0
+  arbitrage.sort((a, b) => sort === 'risk' ? a.risk - b.risk || b.money.net - a.money.net : b.money[sort] - a.money[sort])
+  speculative?.opportunities.sort((a, b) => sort === 'risk' ? a.risk - b.risk || b.scenarios[1].money.net - a.scenarios[1].money.net
+    : b.scenarios[1].money[sort] - a.scenarios[1].money[sort])
+
+  function field(key: keyof typeof defaults, label: string, props?: { step?: string; min?: number; max?: number; placeholder?: string }) {
+    return <NumericField label={label} value={form[key]} {...props} onChange={value => {
+      setForm(previous => ({ ...previous, [key]: value })); setLimit(PAGE_SIZE)
+    }}/>
+  }
+
+  async function requestPair(row: Market) {
+    const pair = pairKey(row.ticker, row.exchange)
+    setRequest({ pair, phase: 'loading' })
+    try {
+      const value = await loadPairHistory(row, now, AbortSignal.timeout(12_000))
+      setManual(previous => ({ ...previous, [pair]: value }))
+      setRequest(null)
+    } catch {
+      setRequest({ pair, phase: 'failed' })
+    }
+  }
+
+  return <>
+    <SectionHead title="Scanner commercial">Comparez des exécutions simulées et explorez les écarts aux prix historiques.</SectionHead>
+    <div className="switch scanner-tabs" role="group" aria-label="Moteur d’analyse">
+      <button aria-pressed={panel === 'arbitrage'} onClick={() => {setPanel('arbitrage'); setLimit(PAGE_SIZE)}}>Arbitrage</button>
+      <button aria-pressed={panel === 'speculation'} onClick={() => {setPanel('speculation'); setLimit(PAGE_SIZE)}}>Spéculation</button>
+    </div>
+    <section className="scanner-controls" aria-label="Filtres et paramètres de simulation">
+      <div className="scanner-grid">
+        <ExchangeField label={panel === 'arbitrage' ? 'Bourse d’achat' : 'Bourse'} data={data} value={from} set={value => {setFrom(value); setLimit(PAGE_SIZE)}}/>
+        {panel === 'arbitrage' && <ExchangeField label="Bourse de revente" data={data} value={to} set={value => {setTo(value); setLimit(PAGE_SIZE)}}/>}
+        <Search placeholder="Rechercher un matériau" value={query} onChange={value => {setQuery(value); setLimit(PAGE_SIZE)}}/>
+        <label className="field"><span>Devise de référence</span><select value={currency} onChange={event => {setCurrency(event.target.value); setRates({}); setLimit(PAGE_SIZE)}}>
+          {currencies.map(code => <option key={code}>{code}</option>)}
+        </select></label>
+        {field('capital', `Capital (${currency})`)}
+        {field('minReturn', 'Rendement minimal (%)')}
+        {field('minLiquidity', panel === 'arbitrage' ? 'Profondeur minimale (unités)' : 'Volume médian minimal (unités/j)')}
+      </div>
+      <details className="scanner-options">
+        <summary>Frais, transport, quantités et change</summary>
+        <div className="scanner-grid">
+          {field('buyFee', 'Frais d’achat (%)', { max: 100 })}
+          {field('sellFee', 'Frais de vente (%)', { max: 99.99 })}
+          {panel === 'arbitrage' && <>
+            {field('fixedTransport', `Transport fixe (${currency})`)}
+            {field('unitTransport', `Transport par unité (${currency})`)}
+          </>}
+          {field('minQuantity', 'Quantité minimale', { step: '1', min: 1 })}
+          {field('maxQuantity', 'Quantité maximale', { step: '1', min: 1 })}
+          {currencies.filter(code => code !== currency).map(code => <NumericField key={code} label={`1 ${code} en ${currency}`}
+            placeholder="Sans conversion" value={rates[code] ?? ''} onChange={value => {setRates(previous => ({ ...previous, [code]: value })); setLimit(PAGE_SIZE)}}/>)}
+        </div>
+      </details>
+      <p className="muted">Renseignez un taux pour inclure une autre devise. Les frais saisis sont des hypothèses.</p>
+      {panel === 'arbitrage' && <div className="scanner-grid scanner-mode">
+        <label className="field"><span>Mode de revente</span><select value={mode} onChange={event => {setMode(event.target.value as SaleMode); setLimit(PAGE_SIZE)}}>
+          <option value="immediate">Vente immédiate</option><option value="limit">Ordre limite futur</option>
+        </select></label>
+        {mode === 'limit' && field('target', `Prix limite unitaire (${currency})`, { placeholder: 'Meilleure offre de vente' })}
+      </div>}
+    </section>
+    {panel === 'arbitrage' && <p className="scanner-notice">{mode === 'immediate'
+      ? 'La vente immédiate suppose que les ordres observés restent disponibles jusqu’à l’arrivée des marchandises.'
+      : 'Scénario conditionnel. Sans prix saisi, le scanner utilise la meilleure offre de vente observée à destination.'}</p>}
+    {!snapshotUsable && <Empty>Instantané FIO ancien ou horodatage indéterminé. Actualisez les données pour relancer le scanner.</Empty>}
+    {invalid && <Empty>Vérifiez les paramètres de simulation. Le capital et les taux saisis doivent être positifs, et les quantités entières et cohérentes.</Empty>}
+    {panel === 'speculation' && <section className="history-status" aria-label="État des historiques">
+      <p>{demo ? 'Séries historiques fictives.'
+        : history ? `Historique collecté le ${formatTime(history.collectedAt)} · ${history.series.length} paires embarquées${history.failed.length ? ` · ${history.failed.length} échecs` : ''}`
+        : failed ? 'Historique embarqué indisponible.' : 'Chargement de l’historique embarqué…'}</p>
+      <p className="muted">Scénarios sur les 30 derniers jours UTC complets. Les résultats dépendent du prix et de l’exécution réelle de la revente.</p>
+      {failed && <button className="button" onClick={retry}>Recharger l’historique</button>}
+      {speculative && <p>{speculative.usable} paires exploitables · {speculative.stale} cotations anciennes · {speculative.uncovered} historiques absents · {speculative.insufficient.length} insuffisants</p>}
+      {!demo && bundledMissing && exact && <button className="button" disabled={request?.phase === 'loading'} onClick={() => void requestPair(exact)}>
+        {request?.phase === 'loading' ? 'Chargement FIO…' : `Charger l’historique de ${exactKey}`}
+      </button>}
+      {request?.phase === 'failed' && <p className="error" role="status">Historique FIO indisponible pour {request.pair}.</p>}
+      {!demo && exactKey && manual[exactKey] && <p>Historique {exactKey} chargé directement depuis FIO.</p>}
+      {!!speculative?.insufficient.length && <details className="scanner-options">
+        <summary>Historiques insuffisants</summary>
+        <ul>{speculative.insufficient.map(({ market, reason }) =>
+          <li key={pairKey(market.ticker, market.exchange)}><b>{pairKey(market.ticker, market.exchange)}</b> · {reason}</li>)}</ul>
+      </details>}
+    </section>}
+    <div className="section-title scanner-results">
+      <h2>{panel === 'speculation' ? 'Scénarios détectés' : 'Trajets détectés'}</h2>
+      <label className="field"><span>Classement</span><select value={sort} onChange={event => {setSort(event.target.value as Sort); setLimit(PAGE_SIZE)}}>
+        <option value="net">Bénéfice net décroissant</option><option value="yield">Rendement décroissant</option><option value="risk">Risque croissant</option>
+      </select></label>
+    </div>
+    {total ? <div className="records">{panel === 'arbitrage'
+      ? arbitrage.slice(0, limit).map(item => <ArbitrageDetails key={`${item.mode}.${item.from.ticker}.${item.from.exchange}.${item.to.exchange}`} item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>)
+      : speculative?.opportunities.slice(0, limit).map(item => <SpeculationDetails key={pairKey(item.market.ticker, item.market.exchange)} item={item} currency={currency} rates={costs.rates} now={now} demo={demo}/>)
+    }</div> : snapshotUsable && !invalid && <Empty>{panel === 'arbitrage'
+      ? 'Aucun trajet rentable selon ces paramètres et les carnets récents.'
+      : 'Aucun scénario admissible parmi les historiques disponibles pour ces filtres.'}</Empty>}
+    <ShowMore shown={limit} total={total} more={() => setLimit(limit + PAGE_SIZE)}/>
+  </>
+}

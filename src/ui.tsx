@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { freshness, numeric } from './domain.ts'
 import type { Amount, Snapshot } from './data.ts'
 
-export type IconName = 'grid' | 'market' | 'cube' | 'factory' | 'search' | 'chevron' | 'refresh' | 'clock' | 'layers'
+export type IconName = 'grid' | 'market' | 'cube' | 'factory' | 'search' | 'chevron' | 'refresh' | 'clock' | 'layers' | 'scanner'
 
 export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
@@ -10,6 +10,7 @@ export function Icon({ name, size = 21 }: { name: IconName; size?: number }) {
     market: <><path d="M3 3v18h18M6 15l5-5 4 3 6-7"/><path d="M17 6h4v4"/></>,
     cube: <><path d="m12 3 9 5v8l-9 5-9-5V8l9-5Z"/><path d="m3 8 9 5 9-5m-9 5v8"/></>,
     factory: <><path d="M3 21V10l6 4V9l6 4V4h4l2 17H3Z"/><path d="M7 17h2m3 0h2m3 0h1"/></>,
+    scanner: <><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></>,
     search: <><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></>,
     chevron: <path d="m9 6 6 6-6 6"/>,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 8a7 7 0 0 1 12-2l2 6m-16 0 2 6a7 7 0 0 0 12-2"/></>,

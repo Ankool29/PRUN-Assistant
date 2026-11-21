@@ -1,6 +1,6 @@
 # PRUN Assistant
 
-Application de consultation en français pour Prosperous Universe. Le tableau de bord présente les bourses et l’état des données. Les vues Marchés, Matériaux et Production donnent accès aux prix, carnets d’ordres, ressources, bâtiments et recettes.
+Application de consultation en français pour Prosperous Universe. Le tableau de bord présente les bourses et l’état des données. Les vues Marchés, Matériaux et Production donnent accès aux prix, carnets d’ordres, ressources, bâtiments et recettes. Le Scanner commercial propose des simulations d’arbitrage et des scénarios fondés sur les historiques de prix.
 
 ## Installation locale
 
@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Le dépôt contient un instantané FIO réel utilisable dès le premier lancement. Pour le mettre à jour, exécuter `python -m collector.collect` à la racine. Le bouton **Actualiser** recharge l’instantané hébergé. Le bouton **Démo** affiche le jeu de données fictif avec un bandeau persistant.
+Le dépôt contient un instantané FIO réel utilisable dès le premier lancement. Pour mettre à jour les données du scanner, exécuter `python -m collector.collect` puis `python -m collector.history` à la racine. Le bouton **Actualiser** recharge l’instantané hébergé. Le bouton **Démo** affiche le jeu de données fictif avec un bandeau persistant.
 
 ## Tests
 
@@ -27,7 +27,7 @@ Les tests d’interface utilisent le build sous `/PRUN-Assistant/`, en portrait 
 
 ## GitHub Pages
 
-Choisir **Settings → Pages → Build and deployment → Source → GitHub Actions**. Le workflow compile et teste les PR et les modifications poussées sur `feature/prun-m0` ou `main`. Sur `main`, il collecte aussi les données FIO et déploie après succès. La planification vise une collecte toutes les deux heures à la minute 23 UTC dès que le workflow est intégré à la branche principale.
+Choisir **Settings → Pages → Build and deployment → Source → GitHub Actions**. Le workflow compile et teste les PR et les modifications poussées sur `feature/prun-m0`, `feature/prun-m1` ou `main`. Sur `main`, il collecte aussi les données FIO et déploie après succès. La planification vise une collecte toutes les deux heures à la minute 23 UTC dès que le workflow est intégré à la branche principale.
 
 Pour publier le jalon depuis `feature/prun-m0` avant la fusion, définir la variable Actions `PRUN_M0_PREVIEW=true`, autoriser cette branche dans l’environnement `github-pages`, puis pousser la branche. Après validation, retirer cette variable et limiter l’environnement de publication à `main`. Le workflow utilise uniquement les permissions natives de GitHub Actions pour publier Pages. Aucune configuration de secret FIO n’est requise.
 
@@ -41,3 +41,5 @@ Pour publier le jalon depuis `feature/prun-m0` avant la fusion, définir la vari
 - GitHub peut retarder sa planification. Sur un dépôt public inactif, GitHub peut également suspendre les déclenchements planifiés.
 
 Voir [l’audit FIO](FIO-AUDIT.md), [l’architecture](ARCHITECTURE.md), [les décisions](DECISIONS.md) et [la feuille de route](ROADMAP.md).
+
+Voir le [rapport M1](M1-CALCULS.md) pour les formules, les limites des scénarios et la prévisualisation du build CI.

@@ -1,8 +1,8 @@
-name: PRUN M0
+name: PRUN Assistant
 
 on:
   push:
-    branches: [main, 'feature/prun-m0']
+    branches: [main, 'feature/prun-m0', 'feature/prun-m1']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -36,6 +36,21 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:mobile
+      - name: Actualiser les données de la prévisualisation
+        if: github.ref == 'refs/heads/feature/prun-m1'
+        run: |
+          if python -m collector.collect; then
+            python -m collector.history
+            npm run build
+          else
+            echo "::warning::FIO indisponible. L’artefact conserve les instantanés de la branche et leurs dates."
+          fi
+      - uses: actions/upload-artifact@v4
+        if: github.ref == 'refs/heads/feature/prun-m1' || github.head_ref == 'feature/prun-m1'
+        with:
+          name: prun-m1-preview
+          path: dist
+          retention-days: 14
 
   build-pages:
     name: Collecte FIO et préparation de Pages
@@ -57,6 +72,7 @@ jobs:
           python-version: '3.12'
       - run: npm ci
       - run: python -m collector.collect
+      - run: python -m collector.history
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

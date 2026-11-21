@@ -10,3 +10,13 @@
 | Mode fictif manuel | Une panne est visible et l’utilisateur décide d’ouvrir le scénario fictif. |
 | Pages construit par GitHub Actions | Les actualisations de prix arrivent dans les artefacts de publication. Elles ne créent aucun commit planifié. |
 | Prépublication M0 sur autorisation de la configuration du dépôt | La variable `PRUN_M0_PREVIEW` autorise les déploiements depuis la branche de travail. La planification GitHub démarre après validation et intégration du workflow à `main`. |
+
+## Décisions M1
+
+| Décision | Motif |
+| --- | --- |
+| Référence monétaire et taux explicites | Les devises du jeu ont des valeurs distinctes. Les taux fournis par le joueur restent des hypothèses. |
+| Simulation immédiate et limite présentées séparément | Seule l’exécution immédiate est bornée par les ordres d’achat observés à destination. |
+| Historique de 30 jours complets et fenêtre de fraîcheur par carnet | Un instantané récent peut contenir un carnet ancien ou un historique trop peu fourni pour une analyse. |
+| Collecte d’historique bornée et recherche manuelle par paire | Le classement initial reste disponible sur Pages avec un nombre limité de requêtes. |
+| Prévisualisation par artefact CI | La branche de travail peut être testée pendant la revue et le site Pages principal continue de servir M0. |

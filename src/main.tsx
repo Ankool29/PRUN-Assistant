@@ -5,6 +5,7 @@ import { formatTime } from './domain.ts'
 import { Dashboard } from './pages/Dashboard.tsx'
 import { Markets } from './pages/Markets.tsx'
 import { Materials } from './pages/Materials.tsx'
+import { Scanner } from './pages/Scanner.tsx'
 import { Production } from './pages/Production.tsx'
 import { Empty, Icon, SectionHead, Status, type IconName } from './ui.tsx'
 import './styles.css'
@@ -14,6 +15,7 @@ const pages = [
   { id: 'marches', title: 'Marchés', icon: 'market' },
   { id: 'materiaux', title: 'Matériaux', icon: 'cube' },
   { id: 'production', title: 'Production', icon: 'factory' },
+  { id: 'scanner', title: 'Scanner commercial', icon: 'scanner' },
 ] as const satisfies readonly { id: string; title: string; icon: IconName }[]
 
 type LoadState = { phase: 'loading' | 'ready' | 'failed'; snapshot: Snapshot | null }
@@ -77,8 +79,8 @@ function App() {
     </div></header>
     <div className="workspace">
       <nav className="navigation" aria-label="Navigation principale">
-        {pages.map(item => <a href={`#${item.id}`} key={item.id} aria-current={item.id === page.id ? 'page' : undefined}>
-          <Icon name={item.icon}/><span>{item.title}</span>
+        {pages.map(item => <a href={`#${item.id}`} key={item.id} aria-label={item.title} aria-current={item.id === page.id ? 'page' : undefined}>
+          <Icon name={item.icon}/><span>{item.id === 'scanner' ? <><span className="scanner-short">Scanner</span><span className="scanner-full">{item.title}</span></> : item.title}</span>
         </a>)}
       </nav>
       <main id="contenu" tabIndex={-1}>
@@ -101,6 +103,7 @@ function App() {
         {data && page.id === 'marches' && <Markets key={`${data.source}-${exchange}`} data={data} now={now} requestedExchange={exchange}/>}
         {data && page.id === 'materiaux' && <Materials key={data.source} data={data}/>}
         {data && page.id === 'production' && <Production key={data.source} data={data}/>}
+        {data && page.id === 'scanner' && <Scanner key={data.source} data={data} now={now}/>}
         <footer>PRUN Assistant <span>·</span> Consultation en lecture seule</footer>
       </main>
     </div>
