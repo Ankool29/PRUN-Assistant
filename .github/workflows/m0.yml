@@ -39,11 +39,8 @@ jobs:
 
   build-pages:
     name: Collecte FIO et préparation de Pages
-    if: >-
-      github.event_name != 'pull_request' &&
-      (github.ref == 'refs/heads/main' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/feature/prun-m0' && vars.PRUN_M0_PREVIEW == 'true'))
-    needs: checks
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [checks, m1-preview]
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -59,6 +56,18 @@ jobs:
       - run: python -m collector.collect
       - run: npm run build
       - uses: actions/configure-pages@v5
+      - name: Réserver le sous-chemin sans écraser les fichiers M0
+        run: test ! -e dist/preview
+      - uses: actions/download-artifact@v4
+        with:
+          name: m1-pages-subdirectory
+          path: dist/preview/m1
+      - name: Vérifier le contenu de la prévisualisation
+        run: |
+          test -s dist/preview/m1/index.html
+          test -s dist/preview/m1/data/fio.json
+          test -s dist/preview/m1/data/history.json
+          grep -q '/PRUN-Assistant/preview/m1/assets/' dist/preview/m1/index.html
       - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
@@ -77,3 +86,34 @@ jobs:
     steps:
       - uses: actions/deploy-pages@v4
         id: deployment
+
+  m1-preview:
+    name: Prévisualisation M1 isolée
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Révision testée de la PR #2. Ce job ne possède aucun droit de déploiement.
+          ref: e0090a3ec47fa1d287a2aaeccb076a6d6a5e0ff7
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: python -m collector.collect
+      - run: python -m collector.history
+      - run: npm run build -- --base=/PRUN-Assistant/preview/m1/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m1-pages-subdirectory
+          path: dist
+          if-no-files-found: error
+          retention-days: 1
